@@ -1030,6 +1030,16 @@ function formatTime(iso: string): string {
   }
 }
 
+// PWA: register service worker for offline-first app shell. Skip during
+// `vite dev` — the SW caches the dev shell and fights HMR.
+if (!import.meta.env.DEV && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('SW registration failed:', err);
+    });
+  });
+}
+
 const root = document.getElementById('app');
 if (!root) throw new Error('missing #app');
 new App(root).start().catch((e) => console.error(e));

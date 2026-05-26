@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Maskable icon needs the artwork inside the safe area (40% of the canvas).
+       We fill the full canvas with the brand color and place a smaller glyph. -->
+  <rect width="512" height="512" fill="#00d4aa"/>
+  <text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle"
+        font-family="ui-monospace, 'Cascadia Code', Consolas, monospace"
+        font-size="220" font-weight="800" fill="#001">C</text>
+</svg>
