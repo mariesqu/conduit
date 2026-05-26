@@ -242,15 +242,124 @@ input {
 .term-pane {
   position: absolute;
   inset: 0;
-  padding: 6px 0 0 6px;
+  padding: 6px;
   display: none;
 }
 
-.term-pane--active { display: block; }
+.term-pane--active { display: flex; }
+
+.term-pane > .leaf,
+.term-pane > .split {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 
 .term-pane__inner {
   height: 100%;
   width: 100%;
+}
+
+/* ---------- Splits + leaves ---------- */
+
+.split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split--horizontal {
+  flex-direction: row;
+}
+
+.split--vertical {
+  flex-direction: column;
+}
+
+.split > .leaf,
+.split > .split {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.divider {
+  background: var(--border);
+  flex: 0 0 2px;
+}
+
+.divider--horizontal { cursor: col-resize; }
+.divider--vertical   { cursor: row-resize; }
+
+.leaf {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  outline: none;
+}
+
+.leaf--active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.leaf__chrome {
+  display: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 2px 4px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  height: 20px;
+  font-size: 11px;
+}
+
+/* Only show pane chrome when the layout has at least one split, or on
+   pointer-coarse devices where keyboard shortcuts aren't available. */
+.term-pane:has(.split) .leaf__chrome,
+.term-pane .leaf__chrome:hover {
+  display: flex;
+}
+
+@media (pointer: coarse) {
+  .leaf__chrome { display: flex; }
+}
+
+.leaf__btn {
+  width: 22px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--fg-dim);
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.leaf__btn:hover {
+  color: var(--fg);
+  background: var(--bg-tab);
+}
+
+.leaf__btn--danger:hover {
+  color: var(--danger);
+}
+
+.leaf__body {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+.leaf__body .term-pane__inner {
+  position: absolute;
+  inset: 0;
 }
 
 .empty {

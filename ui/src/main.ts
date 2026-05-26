@@ -1,4 +1,14 @@
 import './style.css';
+import {
+  Leaf,
+  RootBox,
+  forEachLeaf,
+  leafContaining,
+  makeLeafEl,
+  nextId,
+  removeLeaf,
+  splitLeaf,
+} from './layout';
 import { SessionMode, TerminalSession, TerminalTheme } from './terminal';
 import { Toolbar } from './toolbar';
 import {
@@ -34,10 +44,15 @@ interface Settings {
 
 interface Tab {
   id: string;
+  /** Server session name of the FIRST leaf (used for title + persistence). */
   sessionName: string;
   shell: string;
   title: string;
-  session: TerminalSession;
+  /** Root of this tab's pane layout tree. */
+  rootBox: RootBox;
+  /** The currently-focused leaf within this tab. */
+  activeLeafId: string;
+  /** Outer container appended to bodyEl. Holds the root layout element. */
   pane: HTMLDivElement;
   tabEl: HTMLDivElement;
 }
@@ -118,57 +133,18 @@ class App {
 
     this.toolbar = new Toolbar({
       onKey: (data) => {
-        const tab = this.activeTab();
-        if (tab) tab.session.sendKey(data);
+        const s = this.activeSession();
+        if (s) s.sendKey(data);
       },
     });
     this.root.appendChild(this.toolbar.element);
 
-    // Open a single tab in share mode. Start as read-only; will flip to
-    // writable once the server confirms mode in onReady.
-    const id = Math.random().toString(36).slice(2, 10);
-    const pane = document.createElement('div');
-    pane.className = 'term-pane';
-    this.bodyEl.appendChild(pane);
-
-    const session = new TerminalSession({
-      mode: { kind: 'share', shareToken },
-      token: '',
-      fontSize: this.settings.fontSize,
-      theme: this.settings.theme,
-      readOnly: true,
-      onTitle: (t) => this.setTabTitle(id, t || 'shared'),
-      onReady: ({ name, shell, mode }) => {
-        const t = this.tabs.find((x) => x.id === id);
-        if (!t) return;
-        t.sessionName = name;
-        t.shell = shell;
-        const label = mode === 'writer' ? `${name} (shared)` : `${name} (read-only)`;
-        this.setTabTitle(id, label);
-        // Server told us viewer-vs-writer; flip readOnly to match.
-        if (mode === 'writer') {
-          session.setReadOnly(false);
-        }
-      },
-      onEnded: () => {
-        const t = this.tabs.find((x) => x.id === id);
-        if (t) t.tabEl.classList.add('tab--ended');
-      },
-      onClose: () => this.removeTab(id),
-    });
-    session.attach(pane);
-
-    const tabEl = document.createElement('div');
-    tabEl.className = 'tab tab--active';
-    tabEl.innerHTML = `<span class="tab__title">shared</span>`;
-    this.tabbarInnerEl.appendChild(tabEl);
-    pane.classList.add('term-pane--active');
-
-    const tab: Tab = { id, sessionName: '', shell: '', title: 'shared', session, pane, tabEl };
-    this.tabs.push(tab);
-    this.activeTabId = id;
-    this.emptyEl.style.display = 'none';
-    requestAnimationFrame(() => session.focus());
+    // The normal openTab path now handles share mode via makeLeaf
+    // (defaulting to read-only, flipping in onReady when the server
+    // signals writer). Split/close pane chrome is harmless here — share
+    // guests don't have a Sessions panel, so any spawn attempt would
+    // fail server-side anyway.
+    this.openTab({ kind: 'share', shareToken }, '');
   }
 
   // ---------------- Login ----------------
@@ -264,8 +240,8 @@ class App {
     // Mobile toolbar
     this.toolbar = new Toolbar({
       onKey: (data) => {
-        const tab = this.activeTab();
-        if (tab) tab.session.sendKey(data);
+        const s = this.activeSession();
+        if (s) s.sendKey(data);
       },
     });
 
@@ -274,6 +250,7 @@ class App {
     this.root.appendChild(this.toolbar.element);
     this.installDragDropUpload();
     this.installSearchOverlay();
+    this.installPaneShortcuts();
 
     // Restore previously-open tabs whose server sessions are still alive.
     await this.restoreTabs();
@@ -322,10 +299,10 @@ class App {
     saveStoredTabs(surviving);
   }
 
-  // ---------------- Tabs ----------------
+  // ---------------- Tabs + Panes ----------------
 
   private openTab(mode: SessionMode, shellHint: string): Tab {
-    const id = Math.random().toString(36).slice(2, 10);
+    const tabId = Math.random().toString(36).slice(2, 10);
     const initialTitle =
       mode.kind === 'create'
         ? (mode.name || mode.shell)
@@ -337,52 +314,192 @@ class App {
     pane.className = 'term-pane';
     this.bodyEl.appendChild(pane);
 
-    const session = new TerminalSession({
-      mode,
-      token: this.token,
-      fontSize: this.settings.fontSize,
-      theme: this.settings.theme,
-      onTitle: (t) => this.setTabTitle(id, t || initialTitle),
-      onReady: ({ name, shell }) => {
-        const t = this.tabs.find((x) => x.id === id);
-        if (!t) return;
-        t.sessionName = name;
-        t.shell = shell;
-        if (!t.title || t.title === initialTitle) {
-          this.setTabTitle(id, name);
-        }
-        this.persistTabs();
-      },
-      onEnded: () => {
-        // Session terminated on the server side. Mark tab visually.
-        const t = this.tabs.find((x) => x.id === id);
-        if (t) {
-          t.tabEl.classList.add('tab--ended');
-          this.persistTabs();
-        }
-      },
-      onClose: () => this.removeTab(id),
-    });
-    session.attach(pane);
+    const firstLeaf = this.makeLeaf(mode, shellHint, tabId, /* isFirst */ true, initialTitle);
+    pane.appendChild(firstLeaf.el);
 
     const tabEl = document.createElement('div');
     tabEl.className = 'tab';
     tabEl.innerHTML = `<span class="tab__title">${escapeHtml(initialTitle)}</span><button class="tab__close" type="button" aria-label="detach">×</button>`;
     tabEl.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).classList.contains('tab__close')) return;
-      this.activateTab(id);
+      this.activateTab(tabId);
     });
     tabEl.querySelector('.tab__close')!.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.closeTab(id, { kill: false });
+      this.closeTab(tabId, { kill: false });
     });
     this.tabbarInnerEl.appendChild(tabEl);
 
-    const tab: Tab = { id, sessionName: '', shell: shellHint, title: initialTitle, session, pane, tabEl };
+    const tab: Tab = {
+      id: tabId,
+      sessionName: '',
+      shell: shellHint,
+      title: initialTitle,
+      rootBox: { value: firstLeaf },
+      activeLeafId: firstLeaf.id,
+      pane,
+      tabEl,
+    };
     this.tabs.push(tab);
-    this.activateTab(id);
+    this.activateTab(tabId);
     this.emptyEl.style.display = 'none';
     return tab;
+  }
+
+  /** Build a fresh Leaf for the given mode and wire its session callbacks. */
+  private makeLeaf(
+    mode: SessionMode,
+    shellHint: string,
+    tabId: string,
+    isFirst: boolean,
+    initialTitle: string,
+  ): Leaf {
+    const leafId = nextId('leaf');
+    const el = makeLeafEl();
+    // Pane chrome: tiny header with split/close buttons.
+    const header = document.createElement('div');
+    header.className = 'leaf__chrome';
+    header.innerHTML = `
+      <button type="button" class="leaf__btn" data-action="split-right" title="Split right (Ctrl+Shift+H)">⇥</button>
+      <button type="button" class="leaf__btn" data-action="split-down"  title="Split down (Ctrl+Shift+V)">⇩</button>
+      <button type="button" class="leaf__btn leaf__btn--danger" data-action="close" title="Close pane (Ctrl+Shift+W)">✕</button>
+    `;
+    const body = document.createElement('div');
+    body.className = 'leaf__body';
+    el.appendChild(header);
+    el.appendChild(body);
+
+    const isShare = mode.kind === 'share';
+    const session = new TerminalSession({
+      mode,
+      token: this.token,
+      fontSize: this.settings.fontSize,
+      theme: this.settings.theme,
+      // Share mode starts read-only — server announces viewer-vs-writer
+      // via msg.mode on ready, and we flip if needed.
+      readOnly: isShare,
+      onTitle: (t) => {
+        if (isFirst) this.setTabTitle(tabId, t || initialTitle);
+      },
+      onReady: ({ name, shell, mode: ackMode }) => {
+        const tab = this.tabs.find((x) => x.id === tabId);
+        const leaf = tab ? findLeafInTab(tab, leafId) : null;
+        if (leaf) {
+          leaf.shell = shell;
+        }
+        if (isShare && ackMode === 'writer') {
+          session.setReadOnly(false);
+        }
+        if (isShare && isFirst && tab) {
+          const label = ackMode === 'writer' ? `${name} (shared)` : `${name} (read-only)`;
+          this.setTabTitle(tabId, label);
+        }
+        if (!isShare && isFirst && tab) {
+          tab.sessionName = name;
+          tab.shell = shell;
+          if (!tab.title || tab.title === initialTitle) {
+            this.setTabTitle(tabId, name);
+          }
+          this.persistTabs();
+        }
+      },
+      onEnded: () => {
+        if (isFirst) {
+          const tab = this.tabs.find((x) => x.id === tabId);
+          if (tab) tab.tabEl.classList.add('tab--ended');
+        }
+      },
+      onClose: () => this.removeLeafFromTab(tabId, leafId),
+    });
+    session.attach(body);
+
+    // Click anywhere in the pane → focus it.
+    el.addEventListener('mousedown', () => this.setActiveLeaf(tabId, leafId));
+
+    // Pane chrome actions.
+    header.querySelector('[data-action="split-right"]')!.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.splitActive(tabId, 'horizontal', shellHint);
+    });
+    header.querySelector('[data-action="split-down"]')!.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.splitActive(tabId, 'vertical', shellHint);
+    });
+    header.querySelector('[data-action="close"]')!.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.closeActivePaneOrTab(tabId);
+    });
+
+    return { kind: 'leaf', id: leafId, shell: shellHint, session, el };
+  }
+
+  /**
+   * Split the active leaf of the given tab. The new pane spawns a fresh
+   * server-side session using the same shell as the source pane.
+   */
+  private splitActive(tabId: string, orientation: 'horizontal' | 'vertical', shellHint: string): void {
+    const tab = this.tabs.find((x) => x.id === tabId);
+    if (!tab) return;
+    const active = findLeafInTab(tab, tab.activeLeafId);
+    if (!active) return;
+    const shell = active.shell || shellHint || tab.shell;
+    if (!shell) {
+      toast('No shell to spawn — pick one in a new tab first.', 'error');
+      return;
+    }
+    const newLeaf = this.makeLeaf({ kind: 'create', shell }, shell, tabId, /* isFirst */ false, shell);
+    splitLeaf(tab.rootBox, active, newLeaf, orientation);
+    this.setActiveLeaf(tabId, newLeaf.id);
+  }
+
+  /** Close the active pane. If it's the only pane in the tab, close the tab. */
+  private closeActivePaneOrTab(tabId: string): void {
+    const tab = this.tabs.find((x) => x.id === tabId);
+    if (!tab) return;
+    const active = findLeafInTab(tab, tab.activeLeafId);
+    if (!active) return;
+    if (tab.rootBox.value === active) {
+      this.closeTab(tabId, { kill: false });
+      return;
+    }
+    // Detach (don't kill) the server session for this pane.
+    active.session.dispose({ kill: false });
+    // onClose callback will call removeLeafFromTab.
+  }
+
+  /** Remove a leaf from a tab, collapsing the layout. */
+  private removeLeafFromTab(tabId: string, leafId: string): void {
+    const tab = this.tabs.find((x) => x.id === tabId);
+    if (!tab) return;
+    const active = findLeafInTab(tab, leafId);
+    if (!active) return;
+    const wasActive = tab.activeLeafId === leafId;
+    const newRoot = removeLeaf(tab.rootBox, active);
+    if (!newRoot) {
+      this.removeTab(tabId);
+      return;
+    }
+    // Pick a surviving leaf as the new active.
+    if (wasActive) {
+      let firstSurviving: Leaf | null = null;
+      forEachLeaf(newRoot, (l) => {
+        if (!firstSurviving) firstSurviving = l;
+      });
+      if (firstSurviving) this.setActiveLeaf(tabId, (firstSurviving as Leaf).id);
+    }
+    // Trigger xterm fits since pane geometry just changed.
+    requestAnimationFrame(() => forEachLeaf(tab.rootBox.value, (l) => l.session.focus()));
+  }
+
+  private setActiveLeaf(tabId: string, leafId: string): void {
+    const tab = this.tabs.find((x) => x.id === tabId);
+    if (!tab) return;
+    tab.activeLeafId = leafId;
+    forEachLeaf(tab.rootBox.value, (l) => {
+      l.el.classList.toggle('leaf--active', l.id === leafId);
+    });
+    const active = findLeafInTab(tab, leafId);
+    if (active) requestAnimationFrame(() => active.session.focus());
   }
 
   private activateTab(id: string): void {
@@ -392,15 +509,25 @@ class App {
       t.pane.classList.toggle('term-pane--active', active);
       t.tabEl.classList.toggle('tab--active', active);
       if (active) {
-        requestAnimationFrame(() => t.session.focus());
+        const leaf = findLeafInTab(t, t.activeLeafId);
+        if (leaf) requestAnimationFrame(() => leaf.session.focus());
       }
     }
   }
 
   private closeTab(id: string, opts: { kill: boolean }): void {
-    const t = this.tabs.find((x) => x.id === id);
-    if (!t) return;
-    t.session.dispose({ kill: opts.kill });
+    const tab = this.tabs.find((x) => x.id === id);
+    if (!tab) return;
+    // Dispose all leaves' sessions; the last onClose will call removeTab.
+    const leaves: Leaf[] = [];
+    forEachLeaf(tab.rootBox.value, (l) => leaves.push(l));
+    if (leaves.length === 0) {
+      this.removeTab(id);
+      return;
+    }
+    for (const l of leaves) {
+      l.session.dispose({ kill: opts.kill });
+    }
   }
 
   private removeTab(id: string): void {
@@ -431,6 +558,18 @@ class App {
 
   private activeTab(): Tab | undefined {
     return this.tabs.find((t) => t.id === this.activeTabId);
+  }
+
+  /** Returns the TerminalSession of the active pane in the active tab. */
+  private activeSession(): TerminalSession | null {
+    const tab = this.activeTab();
+    if (!tab) return null;
+    const leaf = findLeafInTab(tab, tab.activeLeafId);
+    return leaf ? leaf.session : null;
+  }
+
+  private forEachLeafInAllTabs(fn: (l: Leaf) => void): void {
+    for (const t of this.tabs) forEachLeaf(t.rootBox.value, fn);
   }
 
   private persistTabs(): void {
@@ -628,6 +767,42 @@ class App {
     return row;
   }
 
+  // ---------------- Pane keyboard shortcuts ----------------
+
+  private installPaneShortcuts(): void {
+    window.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
+      const tab = this.activeTab();
+      if (!tab) return;
+      // Honor browser inputs (e.g. settings dialog text fields)
+      const target = document.activeElement;
+      const inOtherInput =
+        target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+      if (inOtherInput && !(target.closest('.leaf') || target.closest('.term-pane'))) return;
+      switch (e.key.toLowerCase()) {
+        case 'h':
+          e.preventDefault();
+          this.splitActive(tab.id, 'horizontal', tab.shell);
+          break;
+        case 'v':
+          e.preventDefault();
+          this.splitActive(tab.id, 'vertical', tab.shell);
+          break;
+        case 'w':
+          e.preventDefault();
+          this.closeActivePaneOrTab(tab.id);
+          break;
+      }
+    });
+    // Also: click anywhere within any layout to focus the leaf under cursor.
+    this.bodyEl.addEventListener('mousedown', (e) => {
+      const tab = this.activeTab();
+      if (!tab) return;
+      const leaf = leafContaining(tab.rootBox.value, e.target);
+      if (leaf) this.setActiveLeaf(tab.id, leaf.id);
+    });
+  }
+
   // ---------------- Search overlay (Ctrl-F) ----------------
 
   private installSearchOverlay(): void {
@@ -649,12 +824,12 @@ class App {
     };
     const close = () => {
       bar.classList.remove('searchbar--visible');
-      const tab = this.activeTab();
-      tab?.session.searchClear();
-      tab?.session.focus();
+      const s = this.activeSession();
+      s?.searchClear();
+      s?.focus();
     };
-    const next = () => this.activeTab()?.session.searchNext(input.value);
-    const prev = () => this.activeTab()?.session.searchPrev(input.value);
+    const next = () => this.activeSession()?.searchNext(input.value);
+    const prev = () => this.activeSession()?.searchPrev(input.value);
 
     bar.querySelector('[data-action="next"]')!.addEventListener('click', () => next());
     bar.querySelector('[data-action="prev"]')!.addEventListener('click', () => prev());
@@ -672,7 +847,7 @@ class App {
     });
     input.addEventListener('input', () => {
       // Live highlight as the user types.
-      this.activeTab()?.session.searchNext(input.value);
+      this.activeSession()?.searchNext(input.value);
     });
 
     window.addEventListener('keydown', (e) => {
@@ -988,7 +1163,7 @@ class App {
       this.settings.theme = v;
       saveSettings(this.settings);
       applyTheme(v);
-      for (const tab of this.tabs) tab.session.setTheme(v);
+      this.forEachLeafInAllTabs((l) => l.session.setTheme(v));
       sync();
     });
     overlay.querySelector('[data-group="fontSize"]')!.addEventListener('click', (e) => {
@@ -997,7 +1172,7 @@ class App {
       if (!v) return;
       this.settings.fontSize = v;
       saveSettings(this.settings);
-      for (const tab of this.tabs) tab.session.setFontSize(v);
+      this.forEachLeafInAllTabs((l) => l.session.setFontSize(v));
       sync();
     });
     overlay.querySelector('[data-action="close"]')!.addEventListener('click', () => overlay.remove());
@@ -1064,6 +1239,14 @@ function escapeHtml(s: string): string {
     '"': '&quot;',
     "'": '&#39;',
   }[c] as string));
+}
+
+function findLeafInTab(tab: Tab, leafId: string): Leaf | null {
+  let hit: Leaf | null = null;
+  forEachLeaf(tab.rootBox.value, (l) => {
+    if (l.id === leafId) hit = l;
+  });
+  return hit;
 }
 
 function humanSize(bytes: number): string {
