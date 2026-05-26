@@ -57,13 +57,33 @@ type serverMsg struct {
 	Type    string `json:"type"`
 	Name    string `json:"name,omitempty"`
 	Shell   string `json:"shell,omitempty"`
+	Mode    string `json:"mode,omitempty"`    // present on share attaches
 	Created bool   `json:"created,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
 }
 
-func NewWSHandler(cfg *Config, mgr *SessionManager) http.Handler {
+func NewWSHandler(cfg *Config, mgr *SessionManager, shares *ShareManager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Two auth paths:
+		//   1) ?token=MAIN or X-Auth-Token header → full access (create/attach)
+		//   2) ?share=SHARETOKEN → restricted; implicit attach to share's
+		//      session, with mode enforced (viewer = read-only)
+		shareToken := r.URL.Query().Get("share")
+		if shareToken != "" {
+			share, ok := shares.Resolve(shareToken)
+			if !ok {
+				http.Error(w, "invalid or expired share", http.StatusUnauthorized)
+				return
+			}
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				log.Printf("ws upgrade: %v", err)
+				return
+			}
+			handleShareWS(conn, share, mgr)
+			return
+		}
 		if !authorize(cfg, r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -75,6 +95,130 @@ func NewWSHandler(cfg *Config, mgr *SessionManager) http.Handler {
 		}
 		handleWS(conn, cfg, mgr)
 	})
+}
+
+// handleShareWS attaches the WS to the share's session with mode
+// enforcement. Viewers cannot send input, resize, or kill — those
+// messages are silently dropped on the server side, so a malicious
+// client can't escalate via a crafted JSON message.
+func handleShareWS(conn *websocket.Conn, share *Share, mgr *SessionManager) {
+	defer conn.Close()
+
+	sess, ok := mgr.Get(share.Session)
+	if !ok {
+		sendErr(conn, "session no longer exists")
+		return
+	}
+	att, backlog, err := sess.Attach()
+	if err != nil {
+		sendErr(conn, err.Error())
+		return
+	}
+	defer sess.Detach(att)
+
+	var writeMu sync.Mutex
+	writeJSON := func(m serverMsg) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		return conn.WriteJSON(m)
+	}
+	writeBinary := func(b []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		return conn.WriteMessage(websocket.BinaryMessage, b)
+	}
+	writeControl := func(messageType int, data []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteControl(messageType, data, time.Now().Add(5*time.Second))
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+		return nil
+	})
+	pingStop := make(chan struct{})
+	defer close(pingStop)
+	go func() {
+		t := time.NewTicker(wsPingInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-pingStop:
+				return
+			case <-t.C:
+				if err := writeControl(websocket.PingMessage, nil); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	if err := writeJSON(serverMsg{
+		Type:  "ready",
+		Name:  sess.Name,
+		Shell: sess.Shell,
+		Mode:  string(share.Mode),
+	}); err != nil {
+		return
+	}
+	if len(backlog) > 0 {
+		if err := writeBinary(backlog); err != nil {
+			return
+		}
+	}
+
+	go func() {
+		defer conn.Close()
+		for data := range att.Out {
+			if err := writeBinary(data); err != nil {
+				return
+			}
+		}
+		_ = writeJSON(serverMsg{Type: "ended", Reason: "session ended"})
+	}()
+
+	for {
+		mt, data, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		// Only writer mode forwards input. Viewer mode drops keystrokes.
+		switch mt {
+		case websocket.BinaryMessage:
+			if share.Mode == ShareModeWriter {
+				if _, err := sess.Write(data); err != nil {
+					return
+				}
+			}
+		case websocket.TextMessage:
+			if looksLikeJSON(data) {
+				var msg clientMsg
+				if json.Unmarshal(data, &msg) == nil {
+					switch msg.Type {
+					case "resize":
+						if share.Mode == ShareModeWriter {
+							_ = sess.Resize(clampDim(msg.Cols), clampDim(msg.Rows))
+						}
+						continue
+					case "detach", "close":
+						return
+					case "kill":
+						// Never honored via share — kill requires the main token.
+						continue
+					}
+				}
+			}
+			if share.Mode == ShareModeWriter {
+				if _, err := sess.Write(data); err != nil {
+					return
+				}
+			}
+		}
+	}
 }
 
 func handleWS(conn *websocket.Conn, cfg *Config, mgr *SessionManager) {

@@ -1,21 +1,23 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { wsUrl } from './api';
+import { wsShareUrl, wsUrl } from './api';
 
 export type TerminalTheme = 'dark' | 'light';
 
 export type SessionMode =
   | { kind: 'create'; shell: string; name?: string }
-  | { kind: 'attach'; name: string };
+  | { kind: 'attach'; name: string }
+  | { kind: 'share'; shareToken: string };
 
 export interface TerminalSessionOptions {
   mode: SessionMode;
-  token: string;
+  token: string; // empty when joining via share only
   fontSize: number;
   theme: TerminalTheme;
+  readOnly?: boolean; // disable client-side input dispatch (server enforces too)
   onTitle?: (title: string) => void;
-  onReady?: (info: { name: string; shell: string; created: boolean }) => void;
+  onReady?: (info: { name: string; shell: string; created: boolean; mode?: string }) => void;
   onEnded?: (reason: string) => void;
   onClose?: () => void;
 }
@@ -100,8 +102,12 @@ export class TerminalSession {
     this.term.loadAddon(new WebLinksAddon());
 
     this.term.onTitleChange((t) => this.opts.onTitle?.(t));
-    this.term.onData((data) => this.sendInput(data));
+    this.term.onData((data) => {
+      if (this.opts.readOnly) return;
+      this.sendInput(data);
+    });
     this.term.onBinary((data) => {
+      if (this.opts.readOnly) return;
       const bytes = new Uint8Array(data.length);
       for (let i = 0; i < data.length; i++) bytes[i] = data.charCodeAt(i) & 0xff;
       this.sendInputBinary(bytes);
@@ -156,6 +162,10 @@ export class TerminalSession {
     this.fitNow();
   }
 
+  setReadOnly(readOnly: boolean): void {
+    this.opts.readOnly = readOnly;
+  }
+
   sendKey(data: string): void {
     this.sendInput(data);
     this.focus();
@@ -170,12 +180,23 @@ export class TerminalSession {
   }
 
   private connect(): void {
-    const ws = new WebSocket(wsUrl(this.opts.token));
+    const url =
+      this.opts.mode.kind === 'share'
+        ? wsShareUrl(this.opts.mode.shareToken)
+        : wsUrl(this.opts.token);
+    const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
 
     ws.onopen = () => {
       const { cols, rows } = this.term;
+      // Share mode auths via ?share= at the URL and skips the
+      // create/attach handshake — the server attaches automatically.
+      if (this.opts.mode.kind === 'share') {
+        // Mark ready already so any pending input would be ignored
+        // anyway (readOnly is set externally for viewer mode).
+        return;
+      }
       const handshake =
         this.opts.mode.kind === 'create'
           ? {
@@ -199,7 +220,12 @@ export class TerminalSession {
             this.ready = true;
             this.flushPending();
             this.fitNow();
-            this.opts.onReady?.({ name: msg.name, shell: msg.shell, created: !!msg.created });
+            this.opts.onReady?.({
+              name: msg.name,
+              shell: msg.shell,
+              created: !!msg.created,
+              mode: msg.mode,
+            });
           } else if (msg.type === 'ended') {
             this.opts.onEnded?.(msg.reason ?? 'session ended');
             this.term.write(`\r\n\x1b[90m[session ended: ${msg.reason ?? ''}]\x1b[0m\r\n`);

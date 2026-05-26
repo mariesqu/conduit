@@ -599,6 +599,53 @@ input {
   color: var(--danger);
 }
 
+/* ---------- Share dialog ---------- */
+
+.settings__sub {
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.share__result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.share__url {
+  width: 100%;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.share__url:focus {
+  border-color: var(--accent);
+}
+
+.share__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.share__expires {
+  color: var(--fg-dim);
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+
 /* ---------- Ended tab ---------- */
 
 .tab--ended .tab__title {

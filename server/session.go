@@ -220,6 +220,11 @@ type SessionManager struct {
 	mu          sync.Mutex
 	sessions    map[string]*Session
 	maxSessions int
+
+	// OnSessionRemoved is called (without holding any lock) after a
+	// session is removed from the manager. Used to e.g. revoke shares
+	// tied to a now-defunct session. Optional.
+	OnSessionRemoved func(name string)
 }
 
 // ErrSessionLimit is returned by Create when MaxSessions would be exceeded.
@@ -348,8 +353,12 @@ func (m *SessionManager) Shutdown() {
 
 func (m *SessionManager) remove(name string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	delete(m.sessions, name)
+	cb := m.OnSessionRemoved
+	m.mu.Unlock()
+	if cb != nil {
+		cb(name)
+	}
 }
 
 func (m *SessionManager) generateNameLocked(shellName string) string {

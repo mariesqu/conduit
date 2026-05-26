@@ -59,7 +59,60 @@ export async function killSession(token: string, name: string): Promise<boolean>
   return res.ok;
 }
 
+export type ShareMode = 'viewer' | 'writer';
+
+export interface ShareInfo {
+  token: string;
+  session: string;
+  mode: ShareMode;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface CreatedShare {
+  token: string;
+  url: string;
+  session: string;
+  mode: ShareMode;
+  created_at: string;
+  expires_at: string;
+}
+
+export async function createShare(
+  token: string,
+  sessionName: string,
+  mode: ShareMode,
+  ttlSeconds: number,
+): Promise<CreatedShare> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionName)}/share`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Auth-Token': token },
+    body: JSON.stringify({ mode, ttl_seconds: ttlSeconds }),
+  });
+  if (!res.ok) throw new Error(`create share: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+export async function listShares(token: string): Promise<ShareInfo[]> {
+  const res = await fetch('/api/shares', { headers: { 'X-Auth-Token': token } });
+  if (!res.ok) throw new Error(`list shares: ${res.status}`);
+  return res.json();
+}
+
+export async function revokeShare(token: string, shareToken: string): Promise<boolean> {
+  const res = await fetch(`/api/shares/${encodeURIComponent(shareToken)}`, {
+    method: 'DELETE',
+    headers: { 'X-Auth-Token': token },
+  });
+  return res.ok;
+}
+
 export function wsUrl(token: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+}
+
+export function wsShareUrl(shareToken: string): string {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}/ws?share=${encodeURIComponent(shareToken)}`;
 }

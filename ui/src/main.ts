@@ -2,9 +2,12 @@ import './style.css';
 import { SessionMode, TerminalSession, TerminalTheme } from './terminal';
 import { Toolbar } from './toolbar';
 import {
+  CreatedShare,
+  ShareMode,
   SessionInfo,
   ShellInfo,
   clearToken,
+  createShare,
   fetchSessions,
   fetchShells,
   getToken,
@@ -55,9 +58,18 @@ class App {
   }
 
   async start(): Promise<void> {
-    // QR / magic link: ?token=… in the URL → verify and store, then strip
-    // it from history so it isn't leaked via bookmarks or referer headers.
-    const urlToken = new URLSearchParams(location.search).get('token');
+    // Share magic link: ?share=… → join as guest with no main token.
+    // The single tab is read-only or read-write depending on the share's
+    // mode (server enforces; UI reflects).
+    const params = new URLSearchParams(location.search);
+    const shareToken = params.get('share');
+    if (shareToken) {
+      history.replaceState({}, '', location.pathname + location.hash);
+      await this.bootShareGuest(shareToken);
+      return;
+    }
+    // QR / magic link: ?token=… → verify and store, strip from history.
+    const urlToken = params.get('token');
     if (urlToken) {
       history.replaceState({}, '', location.pathname + location.hash);
       if (await verifyToken(urlToken)) {
@@ -74,6 +86,81 @@ class App {
       return;
     }
     this.renderLogin();
+  }
+
+  // ---------------- Share guest (no main token) ----------------
+
+  private async bootShareGuest(shareToken: string): Promise<void> {
+    this.root.innerHTML = '';
+
+    this.tabbarEl = document.createElement('div');
+    this.tabbarEl.className = 'tabbar';
+    this.tabbarInnerEl = document.createElement('div');
+    this.tabbarInnerEl.style.display = 'flex';
+    this.tabbarInnerEl.style.flex = '1';
+    this.tabbarEl.appendChild(this.tabbarInnerEl);
+    this.root.appendChild(this.tabbarEl);
+
+    this.bodyEl = document.createElement('div');
+    this.bodyEl.className = 'body';
+    this.emptyEl = document.createElement('div');
+    this.emptyEl.className = 'empty';
+    this.bodyEl.appendChild(this.emptyEl);
+    this.root.appendChild(this.bodyEl);
+
+    this.toolbar = new Toolbar({
+      onKey: (data) => {
+        const tab = this.activeTab();
+        if (tab) tab.session.sendKey(data);
+      },
+    });
+    this.root.appendChild(this.toolbar.element);
+
+    // Open a single tab in share mode. Start as read-only; will flip to
+    // writable once the server confirms mode in onReady.
+    const id = Math.random().toString(36).slice(2, 10);
+    const pane = document.createElement('div');
+    pane.className = 'term-pane';
+    this.bodyEl.appendChild(pane);
+
+    const session = new TerminalSession({
+      mode: { kind: 'share', shareToken },
+      token: '',
+      fontSize: this.settings.fontSize,
+      theme: this.settings.theme,
+      readOnly: true,
+      onTitle: (t) => this.setTabTitle(id, t || 'shared'),
+      onReady: ({ name, shell, mode }) => {
+        const t = this.tabs.find((x) => x.id === id);
+        if (!t) return;
+        t.sessionName = name;
+        t.shell = shell;
+        const label = mode === 'writer' ? `${name} (shared)` : `${name} (read-only)`;
+        this.setTabTitle(id, label);
+        // Server told us viewer-vs-writer; flip readOnly to match.
+        if (mode === 'writer') {
+          session.setReadOnly(false);
+        }
+      },
+      onEnded: () => {
+        const t = this.tabs.find((x) => x.id === id);
+        if (t) t.tabEl.classList.add('tab--ended');
+      },
+      onClose: () => this.removeTab(id),
+    });
+    session.attach(pane);
+
+    const tabEl = document.createElement('div');
+    tabEl.className = 'tab tab--active';
+    tabEl.innerHTML = `<span class="tab__title">shared</span>`;
+    this.tabbarInnerEl.appendChild(tabEl);
+    pane.classList.add('term-pane--active');
+
+    const tab: Tab = { id, sessionName: '', shell: '', title: 'shared', session, pane, tabEl };
+    this.tabs.push(tab);
+    this.activeTabId = id;
+    this.emptyEl.style.display = 'none';
+    requestAnimationFrame(() => session.focus());
   }
 
   // ---------------- Login ----------------
@@ -228,7 +315,12 @@ class App {
 
   private openTab(mode: SessionMode, shellHint: string): Tab {
     const id = Math.random().toString(36).slice(2, 10);
-    const initialTitle = mode.kind === 'create' ? (mode.name || mode.shell) : mode.name;
+    const initialTitle =
+      mode.kind === 'create'
+        ? (mode.name || mode.shell)
+        : mode.kind === 'attach'
+          ? mode.name
+          : 'shared';
 
     const pane = document.createElement('div');
     pane.className = 'term-pane';
@@ -428,6 +520,7 @@ class App {
           </div>
           <div class="sessions__actions">
             <button type="button" class="sessions__btn" data-action="${openInTab ? 'focus' : 'attach'}">${openInTab ? 'Focus' : 'Attach'}</button>
+            <button type="button" class="sessions__btn" data-action="share">Share</button>
             <button type="button" class="sessions__btn sessions__btn--danger" data-action="kill">Kill</button>
           </div>
         `;
@@ -441,6 +534,9 @@ class App {
             this.activateTab(t.id);
             overlay.remove();
           }
+        });
+        row.querySelector('[data-action="share"]')!.addEventListener('click', () => {
+          this.openShareDialog(s.name);
         });
         row.querySelector('[data-action="kill"]')!.addEventListener('click', async () => {
           if (!confirm(`Kill session "${s.name}"? The shell process will terminate.`)) return;
@@ -461,6 +557,116 @@ class App {
       }
     };
     await refresh();
+  }
+
+  // ---------------- Share dialog ----------------
+
+  private openShareDialog(sessionName: string): void {
+    const overlay = document.createElement('div');
+    overlay.className = 'settings';
+    overlay.innerHTML = `
+      <div class="settings__card">
+        <h2 class="settings__title">Share "${escapeHtml(sessionName)}"</h2>
+        <p class="settings__sub">Generate a time-limited link to give someone access to this session.</p>
+        <div class="settings__row">
+          <span class="settings__label">Mode</span>
+          <div class="settings__seg" data-group="mode">
+            <button type="button" data-value="viewer" aria-pressed="true">Read-only</button>
+            <button type="button" data-value="writer">Can type</button>
+          </div>
+        </div>
+        <div class="settings__row">
+          <span class="settings__label">Expires</span>
+          <div class="settings__seg" data-group="ttl">
+            <button type="button" data-value="900">15m</button>
+            <button type="button" data-value="3600" aria-pressed="true">1h</button>
+            <button type="button" data-value="14400">4h</button>
+            <button type="button" data-value="86400">24h</button>
+          </div>
+        </div>
+        <button class="login__btn" type="button" data-action="create">Generate link</button>
+        <div class="share__result" hidden>
+          <div class="settings__label">Share URL — anyone with this link can join:</div>
+          <input class="share__url" readonly />
+          <div class="share__row">
+            <button class="sessions__btn" type="button" data-action="copy">Copy</button>
+            <button class="sessions__btn sessions__btn--danger" type="button" data-action="revoke">Revoke</button>
+            <span class="share__expires"></span>
+          </div>
+        </div>
+        <button class="settings__close" type="button" data-action="close">Close</button>
+      </div>
+    `;
+
+    let mode: ShareMode = 'viewer';
+    let ttl = 3600;
+    const sync = () => {
+      overlay.querySelectorAll<HTMLButtonElement>('[data-group="mode"] button').forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.value === mode));
+      });
+      overlay.querySelectorAll<HTMLButtonElement>('[data-group="ttl"] button').forEach((b) => {
+        b.setAttribute('aria-pressed', String(Number(b.dataset.value) === ttl));
+      });
+    };
+    overlay.querySelector('[data-group="mode"]')!.addEventListener('click', (e) => {
+      const v = (e.target as HTMLElement).dataset.value;
+      if (v === 'viewer' || v === 'writer') {
+        mode = v;
+        sync();
+      }
+    });
+    overlay.querySelector('[data-group="ttl"]')!.addEventListener('click', (e) => {
+      const v = Number((e.target as HTMLElement).dataset.value);
+      if (v > 0) {
+        ttl = v;
+        sync();
+      }
+    });
+
+    let lastShare: CreatedShare | null = null;
+    const resultBox = overlay.querySelector<HTMLDivElement>('.share__result')!;
+    const urlInput = overlay.querySelector<HTMLInputElement>('.share__url')!;
+    const expiresEl = overlay.querySelector<HTMLSpanElement>('.share__expires')!;
+
+    overlay.querySelector('[data-action="create"]')!.addEventListener('click', async () => {
+      try {
+        const share = await createShare(this.token, sessionName, mode, ttl);
+        lastShare = share;
+        const fullURL = `${location.origin}${share.url}`;
+        urlInput.value = fullURL;
+        expiresEl.textContent = `expires ${formatTime(share.expires_at)}`;
+        resultBox.hidden = false;
+        urlInput.select();
+      } catch (e) {
+        alert(`Failed to create share: ${(e as Error).message}`);
+      }
+    });
+    overlay.querySelector('[data-action="copy"]')!.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(urlInput.value);
+      } catch {
+        urlInput.select();
+        document.execCommand('copy');
+      }
+    });
+    overlay.querySelector('[data-action="revoke"]')!.addEventListener('click', async () => {
+      if (!lastShare) return;
+      const ok = confirm('Revoke this share? The link will stop working immediately.');
+      if (!ok) return;
+      const res = await fetch(`/api/shares/${encodeURIComponent(lastShare.token)}`, {
+        method: 'DELETE',
+        headers: { 'X-Auth-Token': this.token },
+      });
+      if (res.ok) {
+        resultBox.hidden = true;
+        lastShare = null;
+      }
+    });
+    overlay.querySelector('[data-action="close"]')!.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    this.root.appendChild(overlay);
   }
 
   // ---------------- Settings ----------------

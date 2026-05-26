@@ -5,14 +5,13 @@ import (
 	"net/http"
 )
 
-// NewSessionsHandler returns an http.Handler that serves
-//   GET    /api/sessions          → JSON list of SessionInfo
-//   DELETE /api/sessions/{name}   → 204 on success, 404 if missing
+// RegisterSessionRoutes adds the session REST endpoints to mux.
 //
-// Both routes require token auth.
-func NewSessionsHandler(cfg *Config, mgr *SessionManager) http.Handler {
-	mux := http.NewServeMux()
-
+//   GET    /api/sessions          → JSON list of SessionInfo
+//   DELETE /api/sessions/{name}   → 204 / 404
+//
+// All routes require token auth.
+func RegisterSessionRoutes(mux *http.ServeMux, cfg *Config, mgr *SessionManager) {
 	mux.HandleFunc("GET /api/sessions", func(w http.ResponseWriter, r *http.Request) {
 		if !authorize(cfg, r) {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -42,6 +41,4 @@ func NewSessionsHandler(cfg *Config, mgr *SessionManager) http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-
-	return mux
 }
