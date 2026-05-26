@@ -48,7 +48,7 @@ Conduit is **one binary** that runs a local shell server and a browser UI togeth
 ### 1. Build
 
 ```powershell
-git clone https://github.com/<you>/conduit.git
+git clone https://github.com/tech506/conduit.git
 cd conduit
 ./build.ps1           # Windows — produces ./conduit.exe
 ```
@@ -187,7 +187,7 @@ Full threat model → [docs/SECURITY.md](docs/SECURITY.md)
   "files_root": "",             // empty == ~/Conduit-Files
   "max_upload_mb": 50,
   "tunnel": "off",              // "off" | "auto" | "cloudflared"
-  "presets": [                  // optional named bundles
+  "presets_locked": false,      // true: create preset sessions, skip dir/command injection\n  "trust_proxy_headers": false, // trust X-Forwarded-* for absolute share URLs (trusted proxies only)\n  "presets": [                  // optional named bundles
     {
       "name": "dev",
       "description": "Local dev stack",
@@ -272,3 +272,5 @@ Issues, ideas, and PRs welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). F
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+

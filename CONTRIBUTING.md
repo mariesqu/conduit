@@ -24,7 +24,7 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By particip
 - **Send a PR** — see [Pull Request Checklist](#pull-request-checklist) below
 - **Triage** — reproduce open issues, add helpful detail
 
-Good first issues are tagged [`good first issue`](https://github.com/<owner>/conduit/labels/good%20first%20issue).
+Good first issues are tagged [`good first issue`](https://github.com/tech506/conduit/labels/good%20first%20issue).
 
 ## Local Development
 
@@ -53,7 +53,7 @@ make dev                # prints instructions for two-terminal dev
 
 The Vite dev server runs on `:5173` and proxies `/api` and `/ws` to the Go server on `:7180`, so frontend changes hot-reload while the backend handles real sessions.
 
-### Running the smoke test loop
+### Running the smoke test loop\r\n\r\n## Smoke tests
 
 After a change, the minimum verification is:
 
@@ -148,3 +148,5 @@ Use the [Bug Report](.github/ISSUE_TEMPLATE/bug_report.yml) issue form. The more
 ## License
 
 By contributing, you agree your contributions will be licensed under the MIT License (see [LICENSE](LICENSE)).
+
+

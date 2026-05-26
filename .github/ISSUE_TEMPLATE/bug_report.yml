@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible problem
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Conduit version
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS + version
+      options: [Windows, macOS, Linux, Other]
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected vs actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: server_log
+    attributes:
+      label: Server log
+      description: Redact your token before posting.
+  - type: textarea
+    id: browser_console
+    attributes:
+      label: Browser console
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Redact your token before posting.
