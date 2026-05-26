@@ -9,8 +9,10 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,8 +23,14 @@ import (
 var embeddedUI embed.FS
 
 func main() {
-	var configPath string
+	var (
+		configPath string
+		publicURL  string
+		noQR       bool
+	)
 	flag.StringVar(&configPath, "config", "conduit.config.json", "path to config file")
+	flag.StringVar(&publicURL, "public-url", "", "override the URL printed on startup (e.g. https://term.example.com — useful behind a tunnel)")
+	flag.BoolVar(&noQR, "no-qr", false, "suppress the startup QR code")
 	flag.Parse()
 
 	cfg, err := server.LoadConfig(configPath)
@@ -51,9 +59,25 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	accessURL := buildAccessURL(publicURL, cfg)
 	log.Printf("conduit listening on http://%s", addr)
+	log.Printf("access URL: %s", accessURL)
 	log.Printf("auth token: %s", cfg.Token)
-	if cfg.Bind == "127.0.0.1" {
+
+	if !noQR {
+		qr, err := server.RenderQRToTerminal(accessURL)
+		if err == nil {
+			fmt.Println()
+			fmt.Println("Scan from your phone to sign in:")
+			fmt.Println()
+			fmt.Print(qr)
+			fmt.Println()
+		} else {
+			log.Printf("could not render QR: %v", err)
+		}
+	}
+
+	if cfg.Bind == "127.0.0.1" && publicURL == "" {
 		log.Println("bound to localhost — expose with: cloudflared tunnel --url http://localhost:" + fmt.Sprint(cfg.Port))
 	}
 
@@ -73,4 +97,18 @@ func main() {
 	_ = srv.Shutdown(ctx)
 	mgr.Shutdown()
 	log.Println("bye")
+}
+
+// buildAccessURL composes the URL to print on startup, with the auth
+// token embedded so a phone scanning the QR can sign in with one tap.
+func buildAccessURL(publicURL string, cfg *server.Config) string {
+	base := publicURL
+	if base == "" {
+		host := server.HostForURL(cfg.Bind)
+		base = fmt.Sprintf("http://%s:%d", host, cfg.Port)
+	}
+	base = strings.TrimRight(base, "/")
+	q := url.Values{}
+	q.Set("token", cfg.Token)
+	return base + "/?" + q.Encode()
 }

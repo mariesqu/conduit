@@ -55,6 +55,18 @@ class App {
   }
 
   async start(): Promise<void> {
+    // QR / magic link: ?token=… in the URL → verify and store, then strip
+    // it from history so it isn't leaked via bookmarks or referer headers.
+    const urlToken = new URLSearchParams(location.search).get('token');
+    if (urlToken) {
+      history.replaceState({}, '', location.pathname + location.hash);
+      if (await verifyToken(urlToken)) {
+        setToken(urlToken);
+        this.token = urlToken;
+        await this.bootApp();
+        return;
+      }
+    }
     const existing = getToken();
     if (existing && (await verifyToken(existing))) {
       this.token = existing;
