@@ -1,0 +1,24 @@
+# Binaries
+conduit
+conduit.exe
+
+# Runtime config (auto-generated; contains secret token)
+conduit.config.json
+
+# Node
+ui/node_modules/
+ui/dist/*
+!ui/dist/.gitkeep
+
+# Go
+*.test
+*.out
+
+# Agent / tooling caches
+.atl/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
