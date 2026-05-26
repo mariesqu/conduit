@@ -136,7 +136,18 @@ func saveConfig(path string, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	// 0o600 is meaningful on Unix; on Windows we need to set the DACL
+	// explicitly. Best-effort — log and continue if it fails (the token
+	// is still high-entropy and the path is operator-controlled).
+	if err := restrictToCurrentUser(path); err != nil {
+		// Use fmt rather than log to avoid an import cycle in tests
+		// where this package is imported from server_test.
+		_, _ = fmt.Fprintf(os.Stderr, "warn: could not tighten config file ACL: %v\n", err)
+	}
+	return nil
 }
 
 func generateToken() string {
