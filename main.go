@@ -46,10 +46,13 @@ func main() {
 	mgr := server.NewSessionManager(cfg.MaxSessions)
 	shares := server.NewShareManager()
 	defer shares.Shutdown()
-
-	// When a session is killed, drop any shares pointing at it so old
-	// share URLs can't latch onto a recycled name.
 	mgr.OnSessionRemoved = shares.RevokeForSession
+
+	files, err := server.NewFileService(cfg.FilesRoot, cfg.MaxUploadMB)
+	if err != nil {
+		log.Fatalf("file service: %v", err)
+	}
+	log.Printf("files root: %s", files.Root)
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", server.NewWSHandler(cfg, mgr, shares))
@@ -57,6 +60,7 @@ func main() {
 	mux.HandleFunc("/api/auth", server.NewAuthHandler(cfg))
 	server.RegisterSessionRoutes(mux, cfg, mgr)
 	server.RegisterShareRoutes(mux, cfg, mgr, shares)
+	server.RegisterFileRoutes(mux, cfg, files)
 	mux.Handle("/", server.NewUIHandler(uiFS))
 
 	addr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.Port)

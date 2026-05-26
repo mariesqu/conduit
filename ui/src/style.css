@@ -646,6 +646,138 @@ input {
   margin-left: auto;
 }
 
+/* ---------- Drag-drop overlay ---------- */
+
+.dropzone {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 212, 170, 0.12);
+  border: 4px dashed var(--accent);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.dropzone--visible { display: flex; }
+
+.dropzone__inner {
+  background: var(--bg-elev);
+  border: 1px solid var(--accent);
+  color: var(--fg);
+  padding: 1.25rem 2rem;
+  border-radius: 12px;
+  font-size: 1.1rem;
+  box-shadow: var(--shadow);
+}
+
+.dropzone__inner code {
+  background: var(--bg-tab);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+/* ---------- Toasts ---------- */
+
+.toast-stack {
+  position: fixed;
+  bottom: calc(1rem + var(--safe-bottom));
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 300;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 2rem));
+}
+
+.toast {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+  pointer-events: auto;
+  font-size: 0.875rem;
+}
+
+.toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast--success { border-left-color: var(--accent); }
+.toast--info    { border-left-color: var(--accent); }
+.toast--error   { border-left-color: var(--danger); }
+
+/* ---------- Files panel ---------- */
+
+.settings__card--wide {
+  width: min(560px, calc(100vw - 2rem));
+}
+
+.files__cwd {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+  margin-left: 0.5rem;
+}
+
+.files__toolbar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.files__toolbar label {
+  cursor: pointer;
+}
+
+.files__list {
+  max-height: 50vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.files__row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.files__row:hover { background: var(--bg-tab); }
+
+.files__icon { text-align: center; }
+
+.files__name {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files__meta {
+  color: var(--fg-dim);
+  font-size: 0.75rem;
+}
+
 /* ---------- Ended tab ---------- */
 
 .tab--ended .tab__title {

@@ -107,6 +107,56 @@ export async function revokeShare(token: string, shareToken: string): Promise<bo
   return res.ok;
 }
 
+// ---------------- Files ----------------
+
+export interface UploadedFile {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  size: number;
+  dir: boolean;
+  modified: string;
+}
+
+export interface FileListing {
+  root: string;
+  entries: FileEntry[];
+}
+
+export async function uploadFiles(token: string, files: FileList | File[], dir = ''): Promise<UploadedFile[]> {
+  const fd = new FormData();
+  for (const f of Array.from(files)) {
+    fd.append('files', f, f.name);
+  }
+  const url = dir ? `/api/files?dir=${encodeURIComponent(dir)}` : '/api/files';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'X-Auth-Token': token },
+    body: fd,
+  });
+  if (!res.ok) throw new Error(`upload: ${res.status} ${await res.text()}`);
+  return (await res.json()) ?? [];
+}
+
+export function downloadFileUrl(token: string, path: string): string {
+  // Include token in query so a plain <a> can trigger the download.
+  return `/api/files/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+}
+
+export async function listFiles(token: string, dir = ''): Promise<FileListing> {
+  const url = dir ? `/api/files/list?dir=${encodeURIComponent(dir)}` : '/api/files/list';
+  const res = await fetch(url, { headers: { 'X-Auth-Token': token } });
+  if (!res.ok) throw new Error(`list: ${res.status}`);
+  return res.json();
+}
+
+// ---------------- WS URL helpers ----------------
+
 export function wsUrl(token: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;

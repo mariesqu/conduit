@@ -17,11 +17,21 @@ type Config struct {
 	Token         string   `json:"token"`
 	AllowedShells []string `json:"allowed_shells"`
 	MaxSessions   int      `json:"max_sessions"`
+
+	// FilesRoot is the only directory the file API will read or write
+	// under. Empty → ~/Conduit-Files. Path traversal is blocked.
+	FilesRoot string `json:"files_root"`
+
+	// MaxUploadMB caps a single uploaded file's size. 0 → 50.
+	MaxUploadMB int `json:"max_upload_mb"`
 }
 
 // DefaultMaxSessions is the upper bound on concurrent live sessions per
 // server. Bounds the blast radius of an authenticated DoS.
 const DefaultMaxSessions = 64
+
+// DefaultMaxUploadMB caps a single uploaded file's size.
+const DefaultMaxUploadMB = 50
 
 func LoadConfig(path string) (*Config, error) {
 	cfg := &Config{
@@ -60,6 +70,10 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.MaxSessions <= 0 {
 		cfg.MaxSessions = DefaultMaxSessions
+		changed = true
+	}
+	if cfg.MaxUploadMB <= 0 {
+		cfg.MaxUploadMB = DefaultMaxUploadMB
 		changed = true
 	}
 	if changed {

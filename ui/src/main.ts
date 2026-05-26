@@ -3,18 +3,23 @@ import { SessionMode, TerminalSession, TerminalTheme } from './terminal';
 import { Toolbar } from './toolbar';
 import {
   CreatedShare,
+  FileEntry,
   ShareMode,
   SessionInfo,
   ShellInfo,
   clearToken,
   createShare,
+  downloadFileUrl,
   fetchSessions,
   fetchShells,
   getToken,
   killSession,
+  listFiles,
   setToken,
+  uploadFiles,
   verifyToken,
 } from './api';
+import { toast } from './toast';
 
 const SETTINGS_KEY = 'conduit.settings';
 const TABS_KEY = 'conduit.tabs';
@@ -240,6 +245,7 @@ class App {
     actions.className = 'tabbar__actions';
     actions.appendChild(this.makeIconBtn('+', 'New session', () => this.openNewSessionDialog()));
     actions.appendChild(this.makeIconBtn('☰', 'Sessions', () => this.openSessionsPanel()));
+    actions.appendChild(this.makeIconBtn('📁', 'Files', () => this.openFilesPanel()));
     actions.appendChild(this.makeIconBtn('⚙', 'Settings', () => this.openSettings()));
     this.tabbarEl.appendChild(actions);
 
@@ -263,6 +269,7 @@ class App {
     this.root.appendChild(this.tabbarEl);
     this.root.appendChild(this.bodyEl);
     this.root.appendChild(this.toolbar.element);
+    this.installDragDropUpload();
 
     // Restore previously-open tabs whose server sessions are still alive.
     await this.restoreTabs();
@@ -559,6 +566,141 @@ class App {
     await refresh();
   }
 
+  // ---------------- Drag-drop upload ----------------
+
+  private installDragDropUpload(): void {
+    const overlay = document.createElement('div');
+    overlay.className = 'dropzone';
+    overlay.innerHTML = '<div class="dropzone__inner">Drop to upload to <code>files_root</code></div>';
+    this.root.appendChild(overlay);
+
+    let dragDepth = 0;
+    window.addEventListener('dragenter', (e) => {
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+      e.preventDefault();
+      dragDepth++;
+      overlay.classList.add('dropzone--visible');
+    });
+    window.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer) return;
+      if (Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    });
+    window.addEventListener('dragleave', (e) => {
+      if (!e.dataTransfer) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) overlay.classList.remove('dropzone--visible');
+    });
+    window.addEventListener('drop', async (e) => {
+      if (!e.dataTransfer || e.dataTransfer.files.length === 0) return;
+      e.preventDefault();
+      dragDepth = 0;
+      overlay.classList.remove('dropzone--visible');
+      try {
+        const saved = await uploadFiles(this.token, e.dataTransfer.files);
+        if (saved.length === 0) {
+          toast('No files uploaded.', 'info');
+        } else if (saved.length === 1) {
+          toast(`Uploaded → ${saved[0].path}`, 'success');
+        } else {
+          toast(`Uploaded ${saved.length} files`, 'success');
+        }
+      } catch (err) {
+        toast(`Upload failed: ${(err as Error).message}`, 'error', 6000);
+      }
+    });
+  }
+
+  // ---------------- Files panel ----------------
+
+  private async openFilesPanel(): Promise<void> {
+    let cwd = '';
+    const overlay = document.createElement('div');
+    overlay.className = 'settings';
+    overlay.innerHTML = `
+      <div class="settings__card settings__card--wide">
+        <h2 class="settings__title">Files <span class="files__cwd"></span></h2>
+        <p class="settings__sub">Rooted at the server's <code>files_root</code>. Drop files anywhere in the app to upload here.</p>
+        <div class="files__toolbar">
+          <button type="button" class="sessions__btn" data-action="up">⬆ Up</button>
+          <button type="button" class="sessions__btn" data-action="refresh">Refresh</button>
+          <label class="sessions__btn">Upload<input type="file" multiple hidden data-action="upload-input" /></label>
+        </div>
+        <div class="files__list">Loading…</div>
+        <button class="settings__close" type="button" data-action="close">Close</button>
+      </div>
+    `;
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    overlay.querySelector('[data-action="close"]')!.addEventListener('click', () => overlay.remove());
+    const cwdEl = overlay.querySelector<HTMLSpanElement>('.files__cwd')!;
+    const listEl = overlay.querySelector<HTMLDivElement>('.files__list')!;
+
+    const render = (entries: FileEntry[]) => {
+      cwdEl.textContent = cwd ? '/ ' + cwd : '/';
+      if (entries.length === 0) {
+        listEl.innerHTML = '<div class="sessions__empty">Empty directory.</div>';
+        return;
+      }
+      listEl.innerHTML = '';
+      for (const e of entries) {
+        const row = document.createElement('div');
+        row.className = 'files__row';
+        row.innerHTML = `
+          <span class="files__icon">${e.dir ? '📂' : '📄'}</span>
+          <span class="files__name">${escapeHtml(e.name)}</span>
+          <span class="files__meta">${e.dir ? '' : humanSize(e.size)}</span>
+        `;
+        row.addEventListener('click', () => {
+          if (e.dir) {
+            cwd = e.path;
+            refresh();
+          } else {
+            const a = document.createElement('a');
+            a.href = downloadFileUrl(this.token, e.path);
+            a.download = e.name;
+            a.click();
+          }
+        });
+        listEl.appendChild(row);
+      }
+    };
+    const refresh = async () => {
+      try {
+        const listing = await listFiles(this.token, cwd);
+        render(listing.entries ?? []);
+      } catch (err) {
+        listEl.innerHTML = `<div class="sessions__empty">${escapeHtml((err as Error).message)}</div>`;
+      }
+    };
+    overlay.querySelector('[data-action="up"]')!.addEventListener('click', () => {
+      if (!cwd) return;
+      const parts = cwd.split('/').filter(Boolean);
+      parts.pop();
+      cwd = parts.join('/');
+      refresh();
+    });
+    overlay.querySelector('[data-action="refresh"]')!.addEventListener('click', refresh);
+    overlay.querySelector<HTMLInputElement>('[data-action="upload-input"]')!.addEventListener('change', async (e) => {
+      const target = e.target as HTMLInputElement;
+      if (!target.files || target.files.length === 0) return;
+      try {
+        const saved = await uploadFiles(this.token, target.files, cwd);
+        toast(`Uploaded ${saved.length} file(s)`, 'success');
+        target.value = '';
+        await refresh();
+      } catch (err) {
+        toast(`Upload failed: ${(err as Error).message}`, 'error');
+      }
+    });
+
+    this.root.appendChild(overlay);
+    await refresh();
+  }
+
   // ---------------- Share dialog ----------------
 
   private openShareDialog(sessionName: string): void {
@@ -795,6 +937,18 @@ function escapeHtml(s: string): string {
     '"': '&quot;',
     "'": '&#39;',
   }[c] as string));
+}
+
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
 }
 
 function formatTime(iso: string): string {
