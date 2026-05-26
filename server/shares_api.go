@@ -52,14 +52,16 @@ func RegisterShareRoutes(mux *http.ServeMux, cfg *Config, mgr *SessionManager, s
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		path := fmt.Sprintf("/?share=%s", share.Token)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"token":      share.Token,
-			"url":        fmt.Sprintf("/?share=%s", share.Token),
-			"session":    share.Session,
-			"mode":       share.Mode,
-			"created_at": share.CreatedAt,
-			"expires_at": share.ExpiresAt,
+			"token":        share.Token,
+			"url":          path,
+			"absolute_url": AbsoluteURL(cfg, r, path),
+			"session":      share.Session,
+			"mode":         share.Mode,
+			"created_at":   share.CreatedAt,
+			"expires_at":   share.ExpiresAt,
 		})
 	})
 

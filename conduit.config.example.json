@@ -6,5 +6,6 @@
   "max_sessions": 64,
   "files_root": "",
   "max_upload_mb": 50,
-  "tunnel": "off"
+  "tunnel": "off",
+  "trust_proxy_headers": false
 }

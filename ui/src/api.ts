@@ -71,7 +71,10 @@ export interface ShareInfo {
 
 export interface CreatedShare {
   token: string;
+  /** Relative URL: "/?share=…". Always present. */
   url: string;
+  /** Absolute URL built from request host/proto (and X-Forwarded-* when trusted). */
+  absolute_url?: string;
   session: string;
   mode: ShareMode;
   created_at: string;

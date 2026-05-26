@@ -1076,7 +1076,9 @@ class App {
       try {
         const share = await createShare(this.token, sessionName, mode, ttl);
         lastShare = share;
-        const fullURL = `${location.origin}${share.url}`;
+        // Prefer the server's absolute_url (honors trust_proxy_headers
+        // for tunnels / reverse proxies); fall back to location.origin.
+        const fullURL = share.absolute_url || `${location.origin}${share.url}`;
         urlInput.value = fullURL;
         expiresEl.textContent = `expires ${formatTime(share.expires_at)}`;
         resultBox.hidden = false;

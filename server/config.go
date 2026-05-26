@@ -34,6 +34,14 @@ type Config struct {
 
 	// Presets are named bundles of sessions launched together.
 	Presets []Preset `json:"presets,omitempty"`
+
+	// TrustProxyHeaders enables honoring X-Forwarded-Proto and
+	// X-Forwarded-Host when building absolute URLs (currently used for
+	// share-link responses). Off by default — direct-internet exposure
+	// would let any client spoof the absolute URL via these headers.
+	// Turn ON only when a trusted reverse proxy (Cloudflare Tunnel,
+	// Tailscale serve, nginx, Caddy) sets them.
+	TrustProxyHeaders bool `json:"trust_proxy_headers"`
 }
 
 // Preset is a named collection of sessions to launch in one click.
