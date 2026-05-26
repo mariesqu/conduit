@@ -90,7 +90,9 @@ func NewWSHandler(cfg *Config, mgr *SessionManager, shares *ShareManager) http.H
 			handleShareWS(conn, share, mgr)
 			return
 		}
-		if !authorize(cfg, r) {
+		// WS upgrade accepts ?token= because browsers can't set custom
+		// headers on the WebSocket handshake.
+		if !authorizeWithQuery(cfg, r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

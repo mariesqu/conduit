@@ -174,7 +174,8 @@ func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService) {
 	})
 
 	mux.HandleFunc("GET /api/files/download", func(w http.ResponseWriter, r *http.Request) {
-		if !authorize(cfg, r) {
+		// Download accepts ?token= so plain <a download> links work.
+		if !authorizeWithQuery(cfg, r) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

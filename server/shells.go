@@ -74,12 +74,25 @@ func NewShellsHandler(cfg *Config) http.HandlerFunc {
 	}
 }
 
+// authorize accepts the auth token via X-Auth-Token header only.
+// Use authorizeWithQuery for the few callers that legitimately need the
+// query-string fallback (WebSocket upgrade, direct file download links).
 func authorize(cfg *Config, r *http.Request) bool {
-	token := r.Header.Get("X-Auth-Token")
-	if token == "" {
-		token = r.URL.Query().Get("token")
+	return tokenEqual(r.Header.Get("X-Auth-Token"), cfg.Token)
+}
+
+// authorizeWithQuery accepts the auth token via X-Auth-Token header OR
+// the ?token= query parameter. Only used where a header can't be set:
+//   - WebSocket upgrade (browsers can't set custom headers there)
+//   - File download links (plain <a download> can't attach headers)
+//
+// REST callers should use authorize so the token doesn't end up in
+// access logs or browser history.
+func authorizeWithQuery(cfg *Config, r *http.Request) bool {
+	if tokenEqual(r.Header.Get("X-Auth-Token"), cfg.Token) {
+		return true
 	}
-	return tokenEqual(token, cfg.Token)
+	return tokenEqual(r.URL.Query().Get("token"), cfg.Token)
 }
 
 // tokenEqual is a constant-time comparison to avoid leaking the auth
