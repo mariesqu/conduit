@@ -14,7 +14,7 @@
   <a href="docs/DEPLOYMENT.md">Deployment</a> &bull;
   <a href="docs/API.md">API Reference</a> &bull;
   <a href="docs/ARCHITECTURE.md">Architecture</a> &bull;
-  <a href="docs/SECURITY.md">Security</a> &bull;
+  <a href="docs/SECURITY.md">Security</a> &bull;`n  <a href="docs/PUBLIC_HARDENING_CHECKLIST.md">Public Hardening</a> &bull;
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -272,5 +272,6 @@ Issues, ideas, and PRs welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). F
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
 
 
