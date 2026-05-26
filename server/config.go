@@ -31,6 +31,25 @@ type Config struct {
 	//   "cloudflared"  → require cloudflared, fail loudly if not present
 	// Defaults to "off".
 	Tunnel string `json:"tunnel"`
+
+	// Presets are named bundles of sessions launched together.
+	Presets []Preset `json:"presets,omitempty"`
+}
+
+// Preset is a named collection of sessions to launch in one click.
+type Preset struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Sessions    []PresetSession `json:"sessions"`
+}
+
+// PresetSession is one session within a preset. Command is optional —
+// when non-empty it's written to the new shell as initial input.
+type PresetSession struct {
+	Name    string `json:"name"`
+	Shell   string `json:"shell"`
+	Command string `json:"command,omitempty"`
+	Dir     string `json:"dir,omitempty"` // optional cd before command
 }
 
 // DefaultMaxSessions is the upper bound on concurrent live sessions per

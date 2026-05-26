@@ -646,6 +646,65 @@ input {
   margin-left: auto;
 }
 
+/* ---------- Presets ---------- */
+
+.presets__wrap {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem;
+}
+
+.presets__label {
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.presets__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.preset__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg-tab);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.preset__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.preset__name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.preset__desc {
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  margin-top: 0.1rem;
+}
+
+.preset__sessions {
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: var(--fg-dim);
+  margin-top: 0.2rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- Search bar ---------- */
 
 .searchbar {

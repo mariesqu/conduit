@@ -4,16 +4,19 @@ import { Toolbar } from './toolbar';
 import {
   CreatedShare,
   FileEntry,
+  Preset,
   ShareMode,
   SessionInfo,
   ShellInfo,
   clearToken,
   createShare,
   downloadFileUrl,
+  fetchPresets,
   fetchSessions,
   fetchShells,
   getToken,
   killSession,
+  launchPreset,
   listFiles,
   setToken,
   uploadFiles,
@@ -492,8 +495,12 @@ class App {
     const overlay = document.createElement('div');
     overlay.className = 'settings';
     overlay.innerHTML = `
-      <div class="settings__card">
+      <div class="settings__card settings__card--wide">
         <h2 class="settings__title">Sessions</h2>
+        <div class="presets__wrap" hidden>
+          <div class="presets__label">Presets</div>
+          <div class="presets__list"></div>
+        </div>
         <div class="sessions__list">Loading…</div>
         <button class="settings__close" type="button" data-action="close">Close</button>
       </div>
@@ -565,6 +572,60 @@ class App {
       }
     };
     await refresh();
+
+    // Presets section — only shown when the server has any configured.
+    const presetsWrap = overlay.querySelector<HTMLDivElement>('.presets__wrap')!;
+    const presetsList = overlay.querySelector<HTMLDivElement>('.presets__list')!;
+    try {
+      const presets = await fetchPresets(this.token);
+      if (presets.length > 0) {
+        presetsWrap.hidden = false;
+        for (const p of presets) {
+          presetsList.appendChild(this.renderPresetRow(p, overlay, refresh));
+        }
+      }
+    } catch (e) {
+      console.warn('fetchPresets failed', e);
+    }
+  }
+
+  private renderPresetRow(preset: Preset, overlay: HTMLDivElement, refresh: () => Promise<void>): HTMLDivElement {
+    const row = document.createElement('div');
+    row.className = 'preset__row';
+    const sessNames = preset.sessions.map((s) => s.name).join(', ');
+    row.innerHTML = `
+      <div class="preset__meta">
+        <div class="preset__name">${escapeHtml(preset.name)}</div>
+        <div class="preset__desc">${escapeHtml(preset.description ?? '')}</div>
+        <div class="preset__sessions">${escapeHtml(sessNames)}</div>
+      </div>
+      <button type="button" class="sessions__btn" data-action="launch">Launch</button>
+    `;
+    row.querySelector('[data-action="launch"]')!.addEventListener('click', async () => {
+      try {
+        const res = await launchPreset(this.token, preset.name);
+        let opened = 0;
+        for (const r of res.launched) {
+          const ps = preset.sessions.find((s) => s.name === r.session);
+          if (!ps) continue;
+          if (r.status === 'error') {
+            toast(`${r.session}: ${r.error}`, 'error', 6000);
+            continue;
+          }
+          // Open a tab attached to the (now-existing) server session.
+          if (!this.tabs.find((t) => t.sessionName === r.session)) {
+            this.openTab({ kind: 'attach', name: r.session }, ps.shell);
+            opened++;
+          }
+        }
+        toast(`Launched preset "${preset.name}" (${opened} new tab(s))`, 'success');
+        overlay.remove();
+        await refresh();
+      } catch (e) {
+        toast(`Launch failed: ${(e as Error).message}`, 'error', 6000);
+      }
+    });
+    return row;
   }
 
   // ---------------- Search overlay (Ctrl-F) ----------------

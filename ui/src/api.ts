@@ -155,6 +155,41 @@ export async function listFiles(token: string, dir = ''): Promise<FileListing> {
   return res.json();
 }
 
+// ---------------- Presets ----------------
+
+export interface PresetSession {
+  name: string;
+  shell: string;
+  command?: string;
+  dir?: string;
+}
+
+export interface Preset {
+  name: string;
+  description?: string;
+  sessions: PresetSession[];
+}
+
+export interface PresetLaunchResult {
+  preset: string;
+  launched: Array<{ session: string; status: 'created' | 'attached' | 'error'; error?: string }>;
+}
+
+export async function fetchPresets(token: string): Promise<Preset[]> {
+  const res = await fetch('/api/presets', { headers: { 'X-Auth-Token': token } });
+  if (!res.ok) throw new Error(`presets: ${res.status}`);
+  return res.json();
+}
+
+export async function launchPreset(token: string, name: string): Promise<PresetLaunchResult> {
+  const res = await fetch(`/api/presets/${encodeURIComponent(name)}/launch`, {
+    method: 'POST',
+    headers: { 'X-Auth-Token': token },
+  });
+  if (!res.ok) throw new Error(`launch: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
 // ---------------- WS URL helpers ----------------
 
 export function wsUrl(token: string): string {

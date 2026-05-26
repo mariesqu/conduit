@@ -61,6 +61,7 @@ func main() {
 	server.RegisterSessionRoutes(mux, cfg, mgr)
 	server.RegisterShareRoutes(mux, cfg, mgr, shares)
 	server.RegisterFileRoutes(mux, cfg, files)
+	server.RegisterPresetRoutes(mux, cfg, mgr)
 	mux.Handle("/", server.NewUIHandler(uiFS))
 
 	addr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.Port)
