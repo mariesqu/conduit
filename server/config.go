@@ -143,9 +143,17 @@ func saveConfig(path string, cfg *Config) error {
 	// explicitly. Best-effort — log and continue if it fails (the token
 	// is still high-entropy and the path is operator-controlled).
 	if err := restrictToCurrentUser(path); err != nil {
-		// Use fmt rather than log to avoid an import cycle in tests
-		// where this package is imported from server_test.
-		_, _ = fmt.Fprintf(os.Stderr, "warn: could not tighten config file ACL: %v\n", err)
+		// Loud warning on stderr — on Windows this is when the token
+		// file may still be world-readable via the parent directory's
+		// inherited ACL. Operators can either move the config under a
+		// pre-locked directory, or accept the residual risk.
+		_, _ = fmt.Fprintf(os.Stderr,
+			"WARNING: failed to tighten ACL on %s: %v\n"+
+				"         The auth token in this file may be readable by other users\n"+
+				"         on this machine. Place the config under a directory you've\n"+
+				"         already restricted via icacls or NTFS permissions.\n",
+			path, err,
+		)
 	}
 	return nil
 }
