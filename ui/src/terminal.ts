@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { wsShareUrl, wsUrl } from './api';
 
@@ -46,6 +47,15 @@ const darkTheme = {
   brightWhite: '#ffffff',
 };
 
+const searchDecorations = {
+  matchBackground: '#ffd866',
+  matchBorder: '#ffd866',
+  matchOverviewRuler: '#ffd866',
+  activeMatchBackground: '#ff5470',
+  activeMatchBorder: '#ff5470',
+  activeMatchColorOverviewRuler: '#ff5470',
+};
+
 const lightTheme = {
   background: '#ffffff',
   foreground: '#1a1f25',
@@ -77,6 +87,7 @@ export class TerminalSession {
 
   private term: Terminal;
   private fit: FitAddon;
+  private search: SearchAddon;
   private ws: WebSocket | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private closed = false;
@@ -98,7 +109,9 @@ export class TerminalSession {
       theme: opts.theme === 'light' ? lightTheme : darkTheme,
     });
     this.fit = new FitAddon();
+    this.search = new SearchAddon();
     this.term.loadAddon(this.fit);
+    this.term.loadAddon(this.search);
     this.term.loadAddon(new WebLinksAddon());
 
     this.term.onTitleChange((t) => this.opts.onTitle?.(t));
@@ -164,6 +177,20 @@ export class TerminalSession {
 
   setReadOnly(readOnly: boolean): void {
     this.opts.readOnly = readOnly;
+  }
+
+  searchNext(query: string): boolean {
+    if (!query) return false;
+    return this.search.findNext(query, { decorations: searchDecorations });
+  }
+
+  searchPrev(query: string): boolean {
+    if (!query) return false;
+    return this.search.findPrevious(query, { decorations: searchDecorations });
+  }
+
+  searchClear(): void {
+    this.search.clearDecorations();
   }
 
   sendKey(data: string): void {

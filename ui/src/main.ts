@@ -270,6 +270,7 @@ class App {
     this.root.appendChild(this.bodyEl);
     this.root.appendChild(this.toolbar.element);
     this.installDragDropUpload();
+    this.installSearchOverlay();
 
     // Restore previously-open tabs whose server sessions are still alive.
     await this.restoreTabs();
@@ -564,6 +565,71 @@ class App {
       }
     };
     await refresh();
+  }
+
+  // ---------------- Search overlay (Ctrl-F) ----------------
+
+  private installSearchOverlay(): void {
+    const bar = document.createElement('div');
+    bar.className = 'searchbar';
+    bar.innerHTML = `
+      <input type="search" class="searchbar__input" placeholder="Search scrollback…" />
+      <button type="button" class="searchbar__btn" data-action="prev" title="Previous (Shift+Enter)">↑</button>
+      <button type="button" class="searchbar__btn" data-action="next" title="Next (Enter)">↓</button>
+      <button type="button" class="searchbar__btn" data-action="close" title="Close (Esc)">✕</button>
+    `;
+    this.bodyEl.appendChild(bar);
+    const input = bar.querySelector<HTMLInputElement>('.searchbar__input')!;
+
+    const open = () => {
+      bar.classList.add('searchbar--visible');
+      input.focus();
+      input.select();
+    };
+    const close = () => {
+      bar.classList.remove('searchbar--visible');
+      const tab = this.activeTab();
+      tab?.session.searchClear();
+      tab?.session.focus();
+    };
+    const next = () => this.activeTab()?.session.searchNext(input.value);
+    const prev = () => this.activeTab()?.session.searchPrev(input.value);
+
+    bar.querySelector('[data-action="next"]')!.addEventListener('click', () => next());
+    bar.querySelector('[data-action="prev"]')!.addEventListener('click', () => prev());
+    bar.querySelector('[data-action="close"]')!.addEventListener('click', () => close());
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.shiftKey) prev();
+        else next();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+    });
+    input.addEventListener('input', () => {
+      // Live highlight as the user types.
+      this.activeTab()?.session.searchNext(input.value);
+    });
+
+    window.addEventListener('keydown', (e) => {
+      // Ctrl-F (or Cmd-F on Mac). Don't capture if focus is in an input
+      // that isn't ours.
+      const inSearch = document.activeElement === input;
+      const inOtherInput =
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        if (this.tabs.length === 0) return;
+        if (inOtherInput && !inSearch) return; // don't hijack other inputs
+        e.preventDefault();
+        open();
+      } else if (e.key === 'Escape' && bar.classList.contains('searchbar--visible')) {
+        close();
+      }
+    });
   }
 
   // ---------------- Drag-drop upload ----------------

@@ -646,6 +646,49 @@ input {
   margin-left: auto;
 }
 
+/* ---------- Search bar ---------- */
+
+.searchbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  z-index: 40;
+}
+
+.searchbar--visible { display: flex; }
+
+.searchbar__input {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.55rem;
+  outline: none;
+  width: 220px;
+  font-size: 0.85rem;
+}
+
+.searchbar__input:focus { border-color: var(--accent); }
+
+.searchbar__btn {
+  width: 30px;
+  height: 30px;
+  background: var(--bg);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.searchbar__btn:hover { color: var(--fg); border-color: var(--accent); }
+
 /* ---------- Drag-drop overlay ---------- */
 
 .dropzone {
