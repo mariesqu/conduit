@@ -24,6 +24,12 @@ const (
 
 	// Max body size for JSON POSTs — bounds memory from malicious requests.
 	maxJSONBody = 8 * 1024
+
+	// Max size of a single inbound WS message. The handshake JSON,
+	// resize/control messages, and even pasted text are all well under
+	// this. Stops an authenticated client from forcing megabyte-sized
+	// buffer allocations on the server.
+	wsMaxMessageBytes = 64 * 1024
 )
 
 var upgrader = websocket.Upgrader{
@@ -103,6 +109,7 @@ func NewWSHandler(cfg *Config, mgr *SessionManager, shares *ShareManager) http.H
 // client can't escalate via a crafted JSON message.
 func handleShareWS(conn *websocket.Conn, share *Share, mgr *SessionManager) {
 	defer conn.Close()
+	conn.SetReadLimit(wsMaxMessageBytes)
 
 	sess, ok := mgr.Get(share.Session)
 	if !ok {
@@ -223,6 +230,7 @@ func handleShareWS(conn *websocket.Conn, share *Share, mgr *SessionManager) {
 
 func handleWS(conn *websocket.Conn, cfg *Config, mgr *SessionManager) {
 	defer conn.Close()
+	conn.SetReadLimit(wsMaxMessageBytes)
 
 	// First message must be create or attach.
 	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
