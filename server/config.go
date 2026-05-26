@@ -24,6 +24,13 @@ type Config struct {
 
 	// MaxUploadMB caps a single uploaded file's size. 0 → 50.
 	MaxUploadMB int `json:"max_upload_mb"`
+
+	// Tunnel controls the optional public URL bootstrap.
+	//   "off"          → no tunnel attempt
+	//   "auto"         → detect cloudflared in PATH, spawn a quick tunnel if found
+	//   "cloudflared"  → require cloudflared, fail loudly if not present
+	// Defaults to "off".
+	Tunnel string `json:"tunnel"`
 }
 
 // DefaultMaxSessions is the upper bound on concurrent live sessions per

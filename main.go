@@ -70,8 +70,27 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	accessURL := buildAccessURL(publicURL, cfg)
 	log.Printf("conduit listening on http://%s", addr)
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	// Attempt to bring up a tunnel BEFORE printing the URL/QR so the URL
+	// is the public one. publicURL flag always wins over auto-tunnel.
+	var tunnel *server.Tunnel
+	if publicURL == "" {
+		tunnel = maybeStartTunnel(cfg.Tunnel, cfg.Port)
+		if tunnel != nil {
+			publicURL = tunnel.URL
+			log.Printf("tunnel (%s) active: %s", tunnel.Provider, tunnel.URL)
+			defer tunnel.Stop()
+		}
+	}
+
+	accessURL := buildAccessURL(publicURL, cfg)
 	log.Printf("access URL: %s", accessURL)
 	log.Printf("auth token: %s", cfg.Token)
 
@@ -90,13 +109,10 @@ func main() {
 
 	if cfg.Bind == "127.0.0.1" && publicURL == "" {
 		log.Println("bound to localhost — expose with: cloudflared tunnel --url http://localhost:" + fmt.Sprint(cfg.Port))
-	}
-
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen: %v", err)
+		if ts := server.DetectTailscale(); ts != "" {
+			log.Println("tailscale detected — share with: tailscale funnel --bg " + fmt.Sprint(cfg.Port))
 		}
-	}()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -108,6 +124,37 @@ func main() {
 	_ = srv.Shutdown(ctx)
 	mgr.Shutdown()
 	log.Println("bye")
+}
+
+// maybeStartTunnel honors cfg.Tunnel and tries to spawn a public
+// tunnel. Returns nil if disabled, unavailable, or failed.
+//
+//   "off"          → nil (no attempt)
+//   "auto"         → best-effort cloudflared, fall back to nil silently
+//   "cloudflared"  → require cloudflared, log loudly on failure
+//
+// Any other value (or empty) means "off".
+func maybeStartTunnel(mode string, port int) *server.Tunnel {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "auto":
+		t, err := server.StartCloudflaredQuick(port, 20*time.Second)
+		if err != nil {
+			if !errors.Is(err, server.ErrNotFound) {
+				log.Printf("tunnel auto: %v", err)
+			}
+			return nil
+		}
+		return t
+	case "cloudflared":
+		t, err := server.StartCloudflaredQuick(port, 20*time.Second)
+		if err != nil {
+			log.Printf("tunnel cloudflared: %v (install from https://github.com/cloudflare/cloudflared)", err)
+			return nil
+		}
+		return t
+	default:
+		return nil
+	}
 }
 
 // buildAccessURL composes the URL to print on startup, with the auth
