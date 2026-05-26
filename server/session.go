@@ -157,7 +157,10 @@ func (s *Session) closeInternal(reason string) {
 	}
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
-		_, _ = s.cmd.Process.Wait()
+		// cmd.Wait performs go-pty's platform-specific cleanup
+		// (Windows ConPTY handles, Unix wait+reap). Bypassing it via
+		// cmd.Process.Wait leaks resources on Windows.
+		_ = s.cmd.Wait()
 	}
 	if s.onClose != nil {
 		s.onClose()
@@ -214,12 +217,22 @@ func (s *Session) appendToBufferLocked(data []byte) {
 // ---------------- SessionManager ----------------
 
 type SessionManager struct {
-	mu       sync.Mutex
-	sessions map[string]*Session
+	mu          sync.Mutex
+	sessions    map[string]*Session
+	maxSessions int
 }
 
-func NewSessionManager() *SessionManager {
-	return &SessionManager{sessions: make(map[string]*Session)}
+// ErrSessionLimit is returned by Create when MaxSessions would be exceeded.
+var ErrSessionLimit = errors.New("session limit reached")
+
+func NewSessionManager(maxSessions int) *SessionManager {
+	if maxSessions <= 0 {
+		maxSessions = DefaultMaxSessions
+	}
+	return &SessionManager{
+		sessions:    make(map[string]*Session),
+		maxSessions: maxSessions,
+	}
 }
 
 // Create starts a new named session. If name is empty, one is generated.
@@ -230,6 +243,10 @@ func (m *SessionManager) Create(name, shellName string, cols, rows uint16) (*Ses
 		return nil, fmt.Errorf("unknown shell: %s", shellName)
 	}
 	m.mu.Lock()
+	if len(m.sessions) >= m.maxSessions {
+		m.mu.Unlock()
+		return nil, ErrSessionLimit
+	}
 	if name == "" {
 		name = m.generateNameLocked(shellName)
 	} else {
@@ -342,13 +359,17 @@ func (m *SessionManager) generateNameLocked(shellName string) string {
 	}
 	for i := 0; i < 16; i++ {
 		b := make([]byte, 3)
-		_, _ = rand.Read(b)
+		if _, err := rand.Read(b); err != nil {
+			panic(fmt.Errorf("crypto/rand failed: %w", err))
+		}
 		candidate := prefix + "-" + hex.EncodeToString(b)
 		if _, exists := m.sessions[candidate]; !exists {
 			return candidate
 		}
 	}
 	b := make([]byte, 8)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Errorf("crypto/rand failed: %w", err))
+	}
 	return prefix + "-" + hex.EncodeToString(b)
 }

@@ -16,12 +16,18 @@ type Config struct {
 	Port          int      `json:"port"`
 	Token         string   `json:"token"`
 	AllowedShells []string `json:"allowed_shells"`
+	MaxSessions   int      `json:"max_sessions"`
 }
+
+// DefaultMaxSessions is the upper bound on concurrent live sessions per
+// server. Bounds the blast radius of an authenticated DoS.
+const DefaultMaxSessions = 64
 
 func LoadConfig(path string) (*Config, error) {
 	cfg := &Config{
-		Bind: "127.0.0.1",
-		Port: 7180,
+		Bind:        "127.0.0.1",
+		Port:        7180,
+		MaxSessions: DefaultMaxSessions,
 	}
 
 	data, err := os.ReadFile(path)
@@ -50,6 +56,10 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Bind == "" {
 		cfg.Bind = "127.0.0.1"
+		changed = true
+	}
+	if cfg.MaxSessions <= 0 {
+		cfg.MaxSessions = DefaultMaxSessions
 		changed = true
 	}
 	if changed {

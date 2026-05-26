@@ -2,5 +2,6 @@
   "bind": "127.0.0.1",
   "port": 7180,
   "token": "",
-  "allowed_shells": []
+  "allowed_shells": [],
+  "max_sessions": 64
 }

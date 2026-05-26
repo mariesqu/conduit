@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"os/exec"
@@ -78,5 +79,14 @@ func authorize(cfg *Config, r *http.Request) bool {
 	if token == "" {
 		token = r.URL.Query().Get("token")
 	}
-	return token != "" && token == cfg.Token
+	return tokenEqual(token, cfg.Token)
+}
+
+// tokenEqual is a constant-time comparison to avoid leaking the auth
+// token via response-time side channels.
+func tokenEqual(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

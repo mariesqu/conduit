@@ -35,7 +35,7 @@ func main() {
 		log.Fatalf("ui sub-fs: %v", err)
 	}
 
-	mgr := server.NewSessionManager()
+	mgr := server.NewSessionManager(cfg.MaxSessions)
 	mux := http.NewServeMux()
 	mux.Handle("/ws", server.NewWSHandler(cfg, mgr))
 	mux.HandleFunc("/api/shells", server.NewShellsHandler(cfg))

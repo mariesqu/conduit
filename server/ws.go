@@ -12,6 +12,20 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	// WebSocket liveness — pings keep the connection alive through proxies
+	// that close idle sockets (Cloudflare ~100s) and detect dead clients.
+	wsPingInterval = 30 * time.Second
+	wsReadDeadline = 70 * time.Second
+
+	// Bounds on terminal dimensions from clients (sanity / DoS).
+	minDim = 1
+	maxDim = 500
+
+	// Max body size for JSON POSTs — bounds memory from malicious requests.
+	maxJSONBody = 8 * 1024
+)
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
@@ -19,6 +33,16 @@ var upgrader = websocket.Upgrader{
 		// Same-origin in practice; auth enforced via token in query string.
 		return true
 	},
+}
+
+func clampDim(v uint16) uint16 {
+	if v < minDim {
+		return minDim
+	}
+	if v > maxDim {
+		return maxDim
+	}
+	return v
 }
 
 type clientMsg struct {
@@ -111,7 +135,7 @@ func handleWS(conn *websocket.Conn, cfg *Config, mgr *SessionManager) {
 
 	// Apply initial size from the attaching client (last-writer-wins is fine).
 	if first.Cols > 0 && first.Rows > 0 {
-		_ = sess.Resize(first.Cols, first.Rows)
+		_ = sess.Resize(clampDim(first.Cols), clampDim(first.Rows))
 	}
 
 	// Serialize writes to the WS — both goroutines may send concurrently.
@@ -119,13 +143,44 @@ func handleWS(conn *websocket.Conn, cfg *Config, mgr *SessionManager) {
 	writeJSON := func(m serverMsg) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		return conn.WriteJSON(m)
 	}
 	writeBinary := func(b []byte) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		return conn.WriteMessage(websocket.BinaryMessage, b)
 	}
+	writeControl := func(messageType int, data []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteControl(messageType, data, time.Now().Add(5*time.Second))
+	}
+
+	// Keepalive: server-initiated ping every wsPingInterval; client must
+	// respond with pong, refreshing the read deadline.
+	_ = conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+		return nil
+	})
+	pingStop := make(chan struct{})
+	defer close(pingStop)
+	go func() {
+		t := time.NewTicker(wsPingInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-pingStop:
+				return
+			case <-t.C:
+				if err := writeControl(websocket.PingMessage, nil); err != nil {
+					return
+				}
+			}
+		}
+	}()
 
 	if err := writeJSON(serverMsg{
 		Type:    "ready",
@@ -170,7 +225,7 @@ func handleWS(conn *websocket.Conn, cfg *Config, mgr *SessionManager) {
 				if json.Unmarshal(data, &msg) == nil {
 					switch msg.Type {
 					case "resize":
-						_ = sess.Resize(msg.Cols, msg.Rows)
+						_ = sess.Resize(clampDim(msg.Cols), clampDim(msg.Rows))
 						continue
 					case "detach", "close":
 						return
@@ -207,6 +262,7 @@ func NewAuthHandler(cfg *Config) http.HandlerFunc {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
 		var body struct {
 			Token string `json:"token"`
 		}
@@ -214,7 +270,7 @@ func NewAuthHandler(cfg *Config) http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if body.Token == "" || body.Token != cfg.Token {
+		if !tokenEqual(body.Token, cfg.Token) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
