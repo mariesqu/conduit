@@ -14,7 +14,8 @@
   <a href="docs/DEPLOYMENT.md">Deployment</a> &bull;
   <a href="docs/API.md">API Reference</a> &bull;
   <a href="docs/ARCHITECTURE.md">Architecture</a> &bull;
-  <a href="docs/SECURITY.md">Security</a> &bull;`n  <a href="docs/PUBLIC_HARDENING_CHECKLIST.md">Public Hardening</a> &bull;
+  <a href="docs/SECURITY.md">Security</a> &bull;
+  <a href="docs/PUBLIC_HARDENING_CHECKLIST.md">Public Hardening</a> &bull;
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -48,7 +49,7 @@ Conduit is **one binary** that runs a local shell server and a browser UI togeth
 ### 1. Build
 
 ```powershell
-git clone https://github.com/tech506/conduit.git
+git clone https://github.com/mariesqu/conduit.git
 cd conduit
 ./build.ps1           # Windows — produces ./conduit.exe
 ```

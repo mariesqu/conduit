@@ -11,7 +11,7 @@
 Please report vulnerabilities privately:
 
 - GitHub Security Advisory (preferred)
-- Email: <your-security-email@example.com>
+- Email: <mesquivel007@gmail.com>
 
 Do not open public issues for security vulnerabilities.
 

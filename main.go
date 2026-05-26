@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/samyhajal/conduit/server"
+	"github.com/mariesqu/conduit/server"
 )
 
 //go:embed all:ui/dist

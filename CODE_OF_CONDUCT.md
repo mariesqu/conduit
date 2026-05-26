@@ -43,7 +43,7 @@ representing the community in public spaces.
 
 ## Enforcement
 
-Report incidents to: <your-conduct-email@example.com>
+Report incidents to: <mesquivel007@gmail.com>
 
 All complaints will be reviewed and investigated promptly and fairly.
 

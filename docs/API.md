@@ -1,6 +1,16 @@
 # API Reference
 
-All endpoints require auth via `X-Auth-Token` header or `?token=` query.
+## Authentication
+
+All protected endpoints require the main auth token.
+
+| Surface | How to pass the token |
+|---------|------------------------|
+| REST `/api/*` (except download) | `X-Auth-Token: <token>` header **only** |
+| `GET /api/files/download` | Header **or** `?token=<token>` query (so plain `<a download>` links work) |
+| WebSocket `/ws` | `?token=<MAIN>` or `?share=<SHARE_TOKEN>` query (browsers can't set custom headers on the WS handshake) |
+
+The query-string fallback is intentionally narrow — keeping it off the REST path keeps tokens out of access logs and referer headers. Comparison is constant-time via `crypto/subtle`.
 
 ## REST
 

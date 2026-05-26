@@ -11,7 +11,7 @@
 ### Windows
 
 ```powershell
-git clone https://github.com/tech506/conduit.git
+git clone https://github.com/mariesqu/conduit.git
 Set-Location conduit
 ./build.ps1 build
 .\conduit.exe
@@ -20,7 +20,7 @@ Set-Location conduit
 ### Linux/macOS
 
 ```bash
-git clone https://github.com/tech506/conduit.git
+git clone https://github.com/mariesqu/conduit.git
 cd conduit
 make build
 ./conduit

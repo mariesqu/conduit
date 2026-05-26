@@ -7,6 +7,7 @@ Thanks for your interest in making Conduit better. This document covers everythi
 - [Code of Conduct](#code-of-conduct)
 - [Ways to Contribute](#ways-to-contribute)
 - [Local Development](#local-development)
+- [Smoke tests](#smoke-tests)
 - [Conventions](#conventions)
 - [Pull Request Checklist](#pull-request-checklist)
 - [Reporting Bugs](#reporting-bugs)
@@ -24,7 +25,7 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By particip
 - **Send a PR** — see [Pull Request Checklist](#pull-request-checklist) below
 - **Triage** — reproduce open issues, add helpful detail
 
-Good first issues are tagged [`good first issue`](https://github.com/tech506/conduit/labels/good%20first%20issue).
+Good first issues are tagged [`good first issue`](https://github.com/mariesqu/conduit/labels/good%20first%20issue).
 
 ## Local Development
 
@@ -53,7 +54,7 @@ make dev                # prints instructions for two-terminal dev
 
 The Vite dev server runs on `:5173` and proxies `/api` and `/ws` to the Go server on `:7180`, so frontend changes hot-reload while the backend handles real sessions.
 
-### Running the smoke test loop\r\n\r\n## Smoke tests
+## Smoke tests
 
 After a change, the minimum verification is:
 
