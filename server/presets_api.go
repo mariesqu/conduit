@@ -74,6 +74,14 @@ func RegisterPresetRoutes(mux *http.ServeMux, cfg *Config, mgr *SessionManager) 
 			r.Status = "created"
 			results = append(results, r)
 
+			// In locked mode we ONLY create the session — we never type
+			// anything into the shell. Operators who want hardened
+			// behavior can ship the binary with presets_locked=true and
+			// presets that just organize sessions by name.
+			if cfg.PresetsLocked {
+				continue
+			}
+
 			// Build the initial command. Use cd if Dir is set, then the
 			// user-supplied command. Use ; (PowerShell/Unix) or && for
 			// chains; we don't know the shell semantics in detail, so

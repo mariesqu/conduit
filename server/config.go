@@ -35,6 +35,14 @@ type Config struct {
 	// Presets are named bundles of sessions launched together.
 	Presets []Preset `json:"presets,omitempty"`
 
+	// PresetsLocked, when true, makes the preset launch endpoint create
+	// the named sessions but REFUSE to write any 'command' or 'dir' as
+	// auto-typed input. Useful for hardened deployments where the
+	// operator wants presets that organize sessions but never inject
+	// shell input — defense-in-depth for multi-user contexts where the
+	// config file itself might be writable by a less-trusted party.
+	PresetsLocked bool `json:"presets_locked"`
+
 	// TrustProxyHeaders enables honoring X-Forwarded-Proto and
 	// X-Forwarded-Host when building absolute URLs (currently used for
 	// share-link responses). Off by default — direct-internet exposure
