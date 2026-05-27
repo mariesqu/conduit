@@ -22,16 +22,27 @@ import (
 //go:embed all:ui/dist
 var embeddedUI embed.FS
 
+// version is injected at build time via -ldflags "-X main.version=v0.1.0".
+// Defaults to "dev" for local non-release builds.
+var version = "dev"
+
 func main() {
 	var (
-		configPath string
-		publicURL  string
-		noQR       bool
+		configPath  string
+		publicURL   string
+		noQR        bool
+		showVersion bool
 	)
 	flag.StringVar(&configPath, "config", "conduit.config.json", "path to config file")
 	flag.StringVar(&publicURL, "public-url", "", "override the URL printed on startup (e.g. https://term.example.com — useful behind a tunnel)")
 	flag.BoolVar(&noQR, "no-qr", false, "suppress the startup QR code")
+	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println("conduit", version)
+		return
+	}
 
 	cfg, err := server.LoadConfig(configPath)
 	if err != nil {
