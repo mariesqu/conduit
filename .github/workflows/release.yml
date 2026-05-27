@@ -1,0 +1,183 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name to build (e.g. v0.1.0). Tag must already exist.'
+        required: true
+
+jobs:
+  build-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI deps
+        working-directory: ui
+        run: npm ci
+
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
+
+      - name: Upload UI dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+          retention-days: 1
+
+  build:
+    needs: build-ui
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64, archive: tar.gz, ext: ""    }
+          - { goos: linux,   goarch: arm64, archive: tar.gz, ext: ""    }
+          - { goos: darwin,  goarch: amd64, archive: tar.gz, ext: ""    }
+          - { goos: darwin,  goarch: arm64, archive: tar.gz, ext: ""    }
+          - { goos: windows, goarch: amd64, archive: zip,    ext: ".exe" }
+          - { goos: windows, goarch: arm64, archive: zip,    ext: ".exe" }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Download UI dist
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+
+      - name: Resolve version
+        id: ver
+        run: |
+          REF="${GITHUB_REF#refs/tags/}"
+          if [ -z "$REF" ] || [ "$REF" = "$GITHUB_REF" ]; then
+            REF="${{ github.event.inputs.tag }}"
+          fi
+          if [ -z "$REF" ]; then
+            REF="v0.0.0-dev"
+          fi
+          echo "version=$REF" >> "$GITHUB_OUTPUT"
+          echo "Version: $REF"
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          NAME="conduit${{ matrix.ext }}"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
+            -o "dist/${NAME}" .
+
+      - name: Package
+        id: pkg
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          STEM="conduit-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p "release/${STEM}"
+          cp "dist/conduit${{ matrix.ext }}" "release/${STEM}/"
+          cp README.md LICENSE CHANGELOG.md "release/${STEM}/"
+          cp conduit.config.example.json "release/${STEM}/"
+          cd release
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip -r "${STEM}.zip" "${STEM}"
+            echo "asset=release/${STEM}.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar -czf "${STEM}.tar.gz" "${STEM}"
+            echo "asset=release/${STEM}.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+          ls -la
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: conduit-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ steps.pkg.outputs.asset }}
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          REF="${GITHUB_REF#refs/tags/}"
+          if [ -z "$REF" ] || [ "$REF" = "$GITHUB_REF" ]; then
+            REF="${{ github.event.inputs.tag }}"
+          fi
+          echo "version=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Download all archives
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: conduit-*
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        working-directory: artifacts
+        run: |
+          ls -la
+          sha256sum conduit-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          # Strip leading 'v' so we can match the '## [0.1.0] - YYYY-MM-DD' format
+          NUM="${VERSION#v}"
+          # Pull the section for this version, stop at the next '## [' heading.
+          awk -v v="$NUM" '
+            $0 ~ "^## \\[" v "\\]" { found=1; print; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "## ${VERSION}" > RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "See [CHANGELOG.md](CHANGELOG.md)." >> RELEASE_NOTES.md
+          fi
+          echo "--- Notes preview ---"
+          cat RELEASE_NOTES.md
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          # If the release already exists (rerun), upload assets to it; else create.
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION exists — uploading/replacing assets"
+            gh release upload "$VERSION" artifacts/* --clobber
+          else
+            echo "Creating release $VERSION"
+            gh release create "$VERSION" \
+              --title "Conduit $VERSION" \
+              --notes-file RELEASE_NOTES.md \
+              artifacts/*
+          fi
