@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -33,16 +35,27 @@ func main() {
 		publicURL   string
 		noQR        bool
 		showVersion bool
+		console     bool
 	)
 	flag.StringVar(&configPath, "config", "conduit.config.json", "path to config file")
 	flag.StringVar(&publicURL, "public-url", "", "override the URL printed on startup (e.g. https://term.example.com — useful behind a tunnel)")
 	flag.BoolVar(&noQR, "no-qr", false, "suppress the startup QR code")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
+	flag.BoolVar(&console, "console", false, "force console mode (foreground logs, no tray) — Windows debugging")
 	flag.Parse()
 
 	if showVersion {
 		fmt.Println("conduit", version)
 		return
+	}
+
+	// On Windows the released binary is built for the GUI subsystem (no
+	// console), so by default it runs as a tray app and logs to a file.
+	// --console keeps the legacy foreground behavior for debugging.
+	trayMode := runtime.GOOS == "windows" && !console
+	logPath := ""
+	if trayMode {
+		logPath = setupFileLogging()
 	}
 
 	cfg, err := server.LoadConfig(configPath)
@@ -143,13 +156,54 @@ func main() {
 		}
 	}
 
-	accessURL := buildAccessURL(publicURL, cfg)
+	shutdown := func() {
+		log.Println("shutting down...")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		mgr.Shutdown()
+		log.Println("bye")
+	}
+
+	app := &appRuntime{
+		cfg:       cfg,
+		publicURL: publicURL,
+		console:   console,
+		noQR:      noQR,
+		logPath:   logPath,
+		shutdown:  shutdown,
+	}
+
+	// runApp blocks: the console loop waits on a signal; the Windows tray
+	// loop runs systray until Quit. Both call shutdown() on the way out.
+	runApp(app)
+}
+
+// appRuntime carries everything the platform run loop (console or tray)
+// needs once the HTTP server is already listening.
+type appRuntime struct {
+	cfg       *server.Config
+	publicURL string // base public URL (empty → derived from bind)
+	console   bool
+	noQR      bool
+	logPath   string
+	shutdown  func()
+}
+
+// accessURL recomputes the tokenized sign-in URL on demand so it reflects
+// the current token even after a rotation.
+func (a *appRuntime) accessURL() string { return buildAccessURL(a.publicURL, a.cfg) }
+
+// runConsole prints the access URL/QR/token and blocks until an OS signal,
+// then shuts down. Used on non-Windows and whenever --console is set.
+func runConsole(app *appRuntime) {
+	cfg := app.cfg
+	accessURL := app.accessURL()
 	log.Printf("access URL: %s", accessURL)
 	log.Printf("auth token: %s", cfg.CurrentToken())
 
-	if !noQR {
-		qr, err := server.RenderQRToTerminal(accessURL)
-		if err == nil {
+	if !app.noQR {
+		if qr, err := server.RenderQRToTerminal(accessURL); err == nil {
 			fmt.Println()
 			fmt.Println("Scan from your phone to sign in:")
 			fmt.Println()
@@ -160,7 +214,7 @@ func main() {
 		}
 	}
 
-	if cfg.Bind == "127.0.0.1" && publicURL == "" {
+	if cfg.Bind == "127.0.0.1" && app.publicURL == "" {
 		log.Println("bound to localhost — expose with: cloudflared tunnel --url http://localhost:" + fmt.Sprint(cfg.Port))
 		if ts := server.DetectTailscale(); ts != "" {
 			log.Println("tailscale detected — share with: tailscale funnel --bg " + fmt.Sprint(cfg.Port))
@@ -170,21 +224,43 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
+	app.shutdown()
+}
 
-	log.Println("shutting down...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
-	mgr.Shutdown()
-	log.Println("bye")
+// conduitDataDir returns the per-user directory for the log file and the
+// generated QR image.
+func conduitDataDir() string {
+	if d := os.Getenv("LOCALAPPDATA"); d != "" {
+		return filepath.Join(d, "Conduit")
+	}
+	if d, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(d, "Conduit")
+	}
+	return "."
+}
+
+// setupFileLogging points the standard logger at a file (tray mode has no
+// console to write to). Returns the log path, or "" on failure.
+func setupFileLogging() string {
+	dir := conduitDataDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	path := filepath.Join(dir, "conduit.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return ""
+	}
+	log.SetOutput(f)
+	return path
 }
 
 // maybeStartTunnel honors cfg.Tunnel and tries to spawn a public
 // tunnel. Returns nil if disabled, unavailable, or failed.
 //
-//   "off"          → nil (no attempt)
-//   "auto"         → best-effort cloudflared, fall back to nil silently
-//   "cloudflared"  → require cloudflared, log loudly on failure
+//	"off"          → nil (no attempt)
+//	"auto"         → best-effort cloudflared, fall back to nil silently
+//	"cloudflared"  → require cloudflared, log loudly on failure
 //
 // Any other value (or empty) means "off".
 func maybeStartTunnel(mode string, port int) *server.Tunnel {

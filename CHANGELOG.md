@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Windows: runs as a **system-tray app with no console window** (release
+  builds link with `-H=windowsgui`). Tray menu: open in browser, copy access
+  URL / token, show QR, rotate token, start-with-Windows toggle, open log,
+  quit. `--console` flag restores the foreground/QR behavior for debugging.
+  Tray-mode logs go to `%LOCALAPPDATA%\Conduit\conduit.log`.
 - Short-lived tickets (`POST /api/ticket`) so the long-lived token no longer
   travels in WebSocket or download URLs (keeps it out of proxy/access logs)
 - Token rotation (`POST /api/token/rotate`, Settings → **Rotate**) — a revoke
@@ -37,6 +42,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Terminal rendered as a tiny unreadable column until the browser window was
+  resized — and stayed broken on mobile, which has no resize gesture. The fit
+  now runs after layout (and never on a zero-size pane), so it's correct on
+  first paint.
 - Mobile: terminal scrollback is now touch-scrollable (the page's
   `overscroll-behavior` was swallowing the gesture)
 
