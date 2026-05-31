@@ -28,6 +28,7 @@ import {
   killSession,
   launchPreset,
   listFiles,
+  rotateToken,
   setToken,
   uploadFiles,
   verifyToken,
@@ -956,15 +957,20 @@ class App {
           <span class="files__name">${escapeHtml(e.name)}</span>
           <span class="files__meta">${e.dir ? '' : humanSize(e.size)}</span>
         `;
-        row.addEventListener('click', () => {
+        row.addEventListener('click', async () => {
           if (e.dir) {
             cwd = e.path;
             refresh();
           } else {
-            const a = document.createElement('a');
-            a.href = downloadFileUrl(this.token, e.path);
-            a.download = e.name;
-            a.click();
+            try {
+              const href = await downloadFileUrl(this.token, e.path);
+              const a = document.createElement('a');
+              a.href = href;
+              a.download = e.name;
+              a.click();
+            } catch (err) {
+              toast(`Download failed: ${(err as Error).message}`, 'error');
+            }
           }
         });
         listEl.appendChild(row);
@@ -1141,7 +1147,12 @@ class App {
         </div>
         <div class="settings__row" style="flex-direction: column; align-items: stretch; gap: 0.4rem;">
           <span class="settings__label">Access token</span>
-          <div class="settings__token">${escapeHtml(this.token)}</div>
+          <div class="settings__token" data-token-display>••••••••••••••••••••••••</div>
+          <div class="share__row">
+            <button class="sessions__btn" type="button" data-action="reveal">Reveal</button>
+            <button class="sessions__btn" type="button" data-action="copy-token">Copy</button>
+            <button class="sessions__btn sessions__btn--danger" type="button" data-action="rotate">Rotate</button>
+          </div>
         </div>
         <button class="settings__close" type="button" data-action="logout">Sign out</button>
         <button class="settings__close" type="button" data-action="close">Close</button>
@@ -1185,6 +1196,42 @@ class App {
       overlay.remove();
       location.reload();
     });
+
+    // Token controls: masked by default, with reveal / copy / rotate.
+    const tokenDisplay = overlay.querySelector<HTMLDivElement>('[data-token-display]')!;
+    const revealBtn = overlay.querySelector<HTMLButtonElement>('[data-action="reveal"]')!;
+    let revealed = false;
+    const renderToken = () => {
+      // textContent (never innerHTML) so the token is never an HTML sink.
+      tokenDisplay.textContent = revealed ? this.token : '•'.repeat(24);
+      revealBtn.textContent = revealed ? 'Hide' : 'Reveal';
+    };
+    renderToken();
+    revealBtn.addEventListener('click', () => {
+      revealed = !revealed;
+      renderToken();
+    });
+    overlay.querySelector('[data-action="copy-token"]')!.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(this.token);
+        toast('Token copied', 'success');
+      } catch {
+        toast('Copy failed', 'error');
+      }
+    });
+    overlay.querySelector('[data-action="rotate"]')!.addEventListener('click', async () => {
+      if (!confirm('Rotate the access token? Every other signed-in device will be logged out immediately.')) return;
+      try {
+        const next = await rotateToken(this.token);
+        setToken(next);
+        this.token = next;
+        renderToken();
+        toast('Token rotated — other devices are now signed out.', 'success', 6000);
+      } catch (e) {
+        toast(`Rotate failed: ${(e as Error).message}`, 'error', 6000);
+      }
+    });
+
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) overlay.remove();
     });

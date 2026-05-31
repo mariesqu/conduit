@@ -146,9 +146,12 @@ export async function uploadFiles(token: string, files: FileList | File[], dir =
   return (await res.json()) ?? [];
 }
 
-export function downloadFileUrl(token: string, path: string): string {
-  // Include token in query so a plain <a> can trigger the download.
-  return `/api/files/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+export async function downloadFileUrl(token: string, path: string): Promise<string> {
+  // Use a short-lived ticket rather than the long-lived token so the
+  // credential in the URL is worthless seconds later (and not a useful
+  // thing to find in a proxy log or browser history).
+  const ticket = await getTicket(token);
+  return `/api/files/download?path=${encodeURIComponent(path)}&ticket=${encodeURIComponent(ticket)}`;
 }
 
 export async function listFiles(token: string, dir = ''): Promise<FileListing> {
@@ -193,11 +196,40 @@ export async function launchPreset(token: string, name: string): Promise<PresetL
   return res.json();
 }
 
+// ---------------- Tickets + token rotation ----------------
+
+/**
+ * Exchange the long-lived token (sent as a header) for a short-lived
+ * ticket that may safely appear in a URL — used for the WebSocket
+ * upgrade and download links, the only paths that can't carry a header.
+ */
+export async function getTicket(token: string): Promise<string> {
+  const res = await fetch('/api/ticket', {
+    method: 'POST',
+    headers: { 'X-Auth-Token': token },
+  });
+  if (!res.ok) throw new Error(`ticket: ${res.status}`);
+  const data = (await res.json()) as { ticket: string };
+  return data.ticket;
+}
+
+/** Rotate the server's auth token. Returns the new token. All other
+ *  clients holding the old token are logged out. */
+export async function rotateToken(token: string): Promise<string> {
+  const res = await fetch('/api/token/rotate', {
+    method: 'POST',
+    headers: { 'X-Auth-Token': token },
+  });
+  if (!res.ok) throw new Error(`rotate: ${res.status}`);
+  const data = (await res.json()) as { token: string };
+  return data.token;
+}
+
 // ---------------- WS URL helpers ----------------
 
-export function wsUrl(token: string): string {
+export function wsTicketUrl(ticket: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+  return `${proto}//${location.host}/ws?ticket=${encodeURIComponent(ticket)}`;
 }
 
 export function wsShareUrl(shareToken: string): string {

@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { wsShareUrl, wsUrl } from './api';
+import { getTicket, wsShareUrl, wsTicketUrl } from './api';
 
 export type TerminalTheme = 'dark' | 'light';
 
@@ -133,7 +133,7 @@ export class TerminalSession {
     this.fitNow();
     this.resizeObserver = new ResizeObserver(() => this.fitNow());
     this.resizeObserver.observe(this.element);
-    this.connect();
+    void this.connect();
   }
 
   focus(): void {
@@ -206,11 +206,22 @@ export class TerminalSession {
     }
   }
 
-  private connect(): void {
-    const url =
-      this.opts.mode.kind === 'share'
-        ? wsShareUrl(this.opts.mode.shareToken)
-        : wsUrl(this.opts.token);
+  private async connect(): Promise<void> {
+    let url: string;
+    if (this.opts.mode.kind === 'share') {
+      url = wsShareUrl(this.opts.mode.shareToken);
+    } else {
+      // Trade the long-lived token for a short-lived ticket so it never
+      // appears in the WebSocket URL (which proxies log).
+      try {
+        const ticket = await getTicket(this.opts.token);
+        if (this.closed) return;
+        url = wsTicketUrl(ticket);
+      } catch {
+        this.term.write('\r\n\x1b[31m[connection error — could not authorize]\x1b[0m\r\n');
+        return;
+      }
+    }
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
