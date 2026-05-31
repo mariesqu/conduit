@@ -6,6 +6,11 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     cssCodeSplit: false,
+    // Emit no inline module-preload polyfill script. The es2022 target
+    // supports <link rel="modulepreload"> natively, and dropping the
+    // inline <script> lets the server enforce a strict `script-src 'self'`
+    // CSP without an 'unsafe-inline' escape hatch.
+    modulePreload: { polyfill: false },
   },
   server: {
     port: 5173,

@@ -89,6 +89,22 @@ Scan from your phone to sign in:
 
 Open the URL in any browser, or scan the QR from your phone.
 
+### Windows: system tray (no console)
+
+Release builds for Windows are GUI-subsystem binaries — launching `conduit.exe`
+shows **no console window**; Conduit lives in the **system tray** instead.
+Right-click the tray icon to:
+
+- **Open in browser** / **Copy access URL** / **Copy token**
+- **Show QR code** — for phone sign-in
+- **Rotate token** — issue a new token and sign out other devices
+- **Start with Windows** — toggle launch at login
+- **Open log file** — `%LOCALAPPDATA%\Conduit\conduit.log`
+- **Quit** — stop the server and exit
+
+Run `conduit.exe --console` for the classic foreground output with the QR code
+(handy for debugging). On Linux/macOS, Conduit always runs in the foreground.
+
 ## Features
 
 | Capability | What you get |
@@ -188,7 +204,12 @@ Full threat model → [docs/SECURITY.md](docs/SECURITY.md)
   "files_root": "",             // empty == ~/Conduit-Files
   "max_upload_mb": 50,
   "tunnel": "off",              // "off" | "auto" | "cloudflared"
-  "presets_locked": false,      // true: create preset sessions, skip dir/command injection\n  "trust_proxy_headers": false, // trust X-Forwarded-* for absolute share URLs (trusted proxies only)\n  "presets": [                  // optional named bundles
+  "presets_locked": false,      // true: create preset sessions, skip dir/command injection
+  "trust_proxy_headers": false, // trust X-Forwarded-* for absolute share URLs (trusted proxies only)
+  "tls_cert": "",               // path to PEM cert for direct HTTPS (with tls_key)
+  "tls_key": "",                // path to PEM key
+  "allow_insecure": false,      // permit non-loopback bind over plain HTTP (cleartext!)
+  "presets": [                  // optional named bundles
     {
       "name": "dev",
       "description": "Local dev stack",

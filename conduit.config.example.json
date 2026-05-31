@@ -7,5 +7,10 @@
   "files_root": "",
   "max_upload_mb": 50,
   "tunnel": "off",
+  "tls_cert": "",
+  "tls_key": "",
+  "allow_insecure": false,
+  "allowed_origins": [],
+  "presets_locked": false,
   "trust_proxy_headers": false
 }

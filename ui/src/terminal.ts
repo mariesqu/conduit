@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { wsShareUrl, wsUrl } from './api';
+import { getTicket, wsShareUrl, wsTicketUrl } from './api';
 
 export type TerminalTheme = 'dark' | 'light';
 
@@ -130,15 +130,29 @@ export class TerminalSession {
   attach(parent: HTMLElement): void {
     parent.appendChild(this.element);
     this.term.open(this.element);
-    this.fitNow();
+    this.scheduleFit();
     this.resizeObserver = new ResizeObserver(() => this.fitNow());
     this.resizeObserver.observe(this.element);
-    this.connect();
+    void this.connect();
   }
 
   focus(): void {
     this.term.focus();
-    queueMicrotask(() => this.fitNow());
+    this.scheduleFit();
+  }
+
+  /**
+   * Fit after the browser has laid out (and painted) the pane. A single
+   * synchronous fit right after open()/ready usually measures a pane that
+   * isn't sized yet, locking the grid to ~1 column. On desktop you can
+   * nudge it back by resizing the window; on mobile there's no such
+   * gesture, so it stays a tiny unreadable column. Double-rAF guarantees
+   * we measure the final laid-out size; the delayed retry covers slow
+   * first layouts (e.g. webfont swap, mobile chrome settling).
+   */
+  private scheduleFit(): void {
+    requestAnimationFrame(() => requestAnimationFrame(() => this.fitNow()));
+    setTimeout(() => this.fitNow(), 150);
   }
 
   /**
@@ -199,6 +213,9 @@ export class TerminalSession {
   }
 
   private fitNow(): void {
+    // Never fit a zero-size (detached / display:none) element — doing so
+    // would lock in a bogus ~1-column grid that only a later resize fixes.
+    if (!this.element.clientWidth || !this.element.clientHeight) return;
     try { this.fit.fit(); } catch { /* element may be hidden */ }
     if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
       const { cols, rows } = this.term;
@@ -206,11 +223,22 @@ export class TerminalSession {
     }
   }
 
-  private connect(): void {
-    const url =
-      this.opts.mode.kind === 'share'
-        ? wsShareUrl(this.opts.mode.shareToken)
-        : wsUrl(this.opts.token);
+  private async connect(): Promise<void> {
+    let url: string;
+    if (this.opts.mode.kind === 'share') {
+      url = wsShareUrl(this.opts.mode.shareToken);
+    } else {
+      // Trade the long-lived token for a short-lived ticket so it never
+      // appears in the WebSocket URL (which proxies log).
+      try {
+        const ticket = await getTicket(this.opts.token);
+        if (this.closed) return;
+        url = wsTicketUrl(ticket);
+      } catch {
+        this.term.write('\r\n\x1b[31m[connection error — could not authorize]\x1b[0m\r\n');
+        return;
+      }
+    }
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
@@ -246,7 +274,7 @@ export class TerminalSession {
             this.shell = msg.shell;
             this.ready = true;
             this.flushPending();
-            this.fitNow();
+            this.scheduleFit();
             this.opts.onReady?.({
               name: msg.name,
               shell: msg.shell,

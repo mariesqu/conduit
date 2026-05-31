@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -52,6 +53,8 @@ func RegisterShareRoutes(mux *http.ServeMux, cfg *Config, mgr *SessionManager, s
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		log.Printf("share: created session=%q mode=%s ttl=%ds by %s",
+			share.Session, share.Mode, body.TTLSeconds, clientIP(cfg, r))
 		path := fmt.Sprintf("/?share=%s", share.Token)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

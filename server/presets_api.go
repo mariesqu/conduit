@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,11 @@ func RegisterPresetRoutes(mux *http.ServeMux, cfg *Config, mgr *SessionManager) 
 			// user-supplied command. Use ; (PowerShell/Unix) or && for
 			// chains; we don't know the shell semantics in detail, so
 			// keep it simple — separate lines.
+			// Strip control characters (notably CR/LF) so a preset value
+			// can't smuggle extra command lines into the shell beyond the
+			// single line the operator intended.
+			dir := sanitizeInline(ps.Dir)
+			cmd := sanitizeInline(ps.Command)
 			go func(s *Session, dir, cmd string) {
 				// Give the shell a moment to print its prompt before injecting
 				// input so the prompt doesn't visually overlap the command.
@@ -97,7 +103,7 @@ func RegisterPresetRoutes(mux *http.ServeMux, cfg *Config, mgr *SessionManager) 
 				if cmd != "" {
 					_, _ = s.Write([]byte(cmd + "\r\n"))
 				}
-			}(sess, ps.Dir, ps.Command)
+			}(sess, dir, cmd)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -108,14 +114,35 @@ func RegisterPresetRoutes(mux *http.ServeMux, cfg *Config, mgr *SessionManager) 
 	})
 }
 
-// quoteForShell wraps s in double quotes if it contains whitespace or
-// shell-special characters. Good enough for the cd argument on both
-// PowerShell and POSIX shells.
+// sanitizeInline removes control characters (including CR and LF) from a
+// preset-supplied value. Presets come from the operator's own config
+// file, but stripping line breaks here is cheap defense-in-depth that
+// keeps a single configured value from expanding into multiple shell
+// command lines — and it pairs with presets_locked for contexts where
+// the config might be written by a less-trusted party.
+func sanitizeInline(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || (r < 0x20 && r != '\t') || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// quoteForShell wraps s in double quotes (escaping any embedded double
+// quote by doubling it, which both PowerShell and POSIX shells accept
+// inside a double-quoted string) when s contains whitespace or a
+// shell-special character. Good enough for the cd argument.
 func quoteForShell(s string) string {
+	needsQuote := false
 	for _, c := range s {
-		if c == ' ' || c == '\t' || c == '(' || c == ')' || c == '&' || c == ';' || c == '|' || c == '<' || c == '>' {
-			return `"` + s + `"`
+		switch c {
+		case ' ', '\t', '(', ')', '&', ';', '|', '<', '>', '"', '`', '$', '\'':
+			needsQuote = true
 		}
 	}
-	return s
+	if !needsQuote {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 type Config struct {
@@ -17,6 +18,23 @@ type Config struct {
 	Token         string   `json:"token"`
 	AllowedShells []string `json:"allowed_shells"`
 	MaxSessions   int      `json:"max_sessions"`
+
+	// TLSCert and TLSKey, when both set, make the server speak HTTPS
+	// directly (ListenAndServeTLS). Leave empty when TLS is terminated
+	// upstream by a tunnel or reverse proxy.
+	TLSCert string `json:"tls_cert"`
+	TLSKey  string `json:"tls_key"`
+
+	// AllowInsecure permits binding to a non-loopback address over plain
+	// HTTP. OFF by default: doing so serves the auth token and every
+	// keystroke in cleartext on the network. Only set this if you fully
+	// understand the exposure (e.g. an already-encrypted overlay network).
+	AllowInsecure bool `json:"allow_insecure"`
+
+	// AllowedOrigins is an optional allowlist of extra Origin hosts the
+	// WebSocket upgrade will accept in addition to same-origin. Same-origin
+	// is always allowed; this is for split-origin deployments only.
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
 
 	// FilesRoot is the only directory the file API will read or write
 	// under. Empty → ~/Conduit-Files. Path traversal is blocked.
@@ -50,6 +68,13 @@ type Config struct {
 	// Turn ON only when a trusted reverse proxy (Cloudflare Tunnel,
 	// Tailscale serve, nginx, Caddy) sets them.
 	TrustProxyHeaders bool `json:"trust_proxy_headers"`
+
+	// mu guards Token against the data race between request handlers
+	// reading it (auth) and a rotation request mutating it. path is the
+	// source config file, retained so RotateToken can persist the new
+	// value. Both are unexported and therefore ignored by encoding/json.
+	mu   sync.RWMutex
+	path string
 }
 
 // Preset is a named collection of sessions to launch in one click.
@@ -81,6 +106,7 @@ func LoadConfig(path string) (*Config, error) {
 		Port:        7180,
 		MaxSessions: DefaultMaxSessions,
 	}
+	cfg.path = path
 
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -164,6 +190,35 @@ func generateToken() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// CurrentToken returns the active auth token under a read lock so it is
+// safe to call concurrently with RotateToken.
+func (c *Config) CurrentToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Token
+}
+
+// RotateToken generates a fresh auth token, persists it to the config
+// file, and returns it. All clients holding the previous token are
+// effectively logged out — this is the revoke path for a leaked token.
+func (c *Config) RotateToken() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Token = generateToken()
+	if c.path != "" {
+		if err := saveConfig(c.path, c); err != nil {
+			return "", err
+		}
+	}
+	return c.Token, nil
+}
+
+// TLSEnabled reports whether a cert/key pair is configured for direct
+// HTTPS serving.
+func (c *Config) TLSEnabled() bool {
+	return c.TLSCert != "" && c.TLSKey != ""
 }
 
 func (c *Config) IsShellAllowed(name string) bool {

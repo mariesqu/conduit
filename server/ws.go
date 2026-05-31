@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -32,13 +33,50 @@ const (
 	wsMaxMessageBytes = 64 * 1024
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  4096,
-	WriteBufferSize: 4096,
-	CheckOrigin: func(r *http.Request) bool {
-		// Same-origin in practice; auth enforced via token in query string.
+// newUpgrader builds a WebSocket upgrader whose CheckOrigin enforces
+// same-origin (plus any configured AllowedOrigins). Auth is a bearer
+// token/ticket — not a cookie — so cross-site WebSocket hijacking via
+// ambient credentials isn't possible here; this is defense-in-depth
+// that also blocks the DNS-rebinding edge against a localhost bind.
+func newUpgrader(cfg *Config) *websocket.Upgrader {
+	return &websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 4096,
+		CheckOrigin:     func(r *http.Request) bool { return originAllowed(cfg, r) },
+	}
+}
+
+// originAllowed permits requests with no Origin (non-browser clients,
+// which carry no ambient credentials), exact same-origin requests, and
+// any host in cfg.AllowedOrigins.
+func originAllowed(cfg *Config, r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
 		return true
-	},
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+
+	hosts := []string{r.Host}
+	if cfg.TrustProxyHeaders {
+		if fh := firstChainValue(r.Header.Get("X-Forwarded-Host")); fh != "" {
+			hosts = append(hosts, fh)
+		}
+	}
+	for _, h := range hosts {
+		if h != "" && strings.EqualFold(u.Host, h) {
+			return true
+		}
+	}
+	for _, allowed := range cfg.AllowedOrigins {
+		allowed = strings.TrimSpace(allowed)
+		if allowed != "" && (strings.EqualFold(allowed, origin) || strings.EqualFold(allowed, u.Host)) {
+			return true
+		}
+	}
+	return false
 }
 
 func clampDim(v uint16) uint16 {
@@ -69,34 +107,41 @@ type serverMsg struct {
 	Message string `json:"message,omitempty"`
 }
 
-func NewWSHandler(cfg *Config, mgr *SessionManager, shares *ShareManager) http.Handler {
+func NewWSHandler(cfg *Config, mgr *SessionManager, shares *ShareManager, tickets *TicketManager) http.Handler {
+	up := newUpgrader(cfg)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Two auth paths:
-		//   1) ?token=MAIN or X-Auth-Token header → full access (create/attach)
+		ip := clientIP(cfg, r)
+		// Three auth paths:
+		//   1) ?ticket=… (preferred) or ?token=MAIN or X-Auth-Token header
+		//      → full access (create/attach)
 		//   2) ?share=SHARETOKEN → restricted; implicit attach to share's
 		//      session, with mode enforced (viewer = read-only)
 		shareToken := r.URL.Query().Get("share")
 		if shareToken != "" {
 			share, ok := shares.Resolve(shareToken)
 			if !ok {
+				log.Printf("ws: rejected invalid/expired share from %s", ip)
 				http.Error(w, "invalid or expired share", http.StatusUnauthorized)
 				return
 			}
-			conn, err := upgrader.Upgrade(w, r, nil)
+			conn, err := up.Upgrade(w, r, nil)
 			if err != nil {
 				log.Printf("ws upgrade: %v", err)
 				return
 			}
+			log.Printf("ws: share attach session=%q mode=%s from %s", share.Session, share.Mode, ip)
 			handleShareWS(conn, share, mgr)
 			return
 		}
-		// WS upgrade accepts ?token= because browsers can't set custom
-		// headers on the WebSocket handshake.
-		if !authorizeWithQuery(cfg, r) {
+		// A short-lived ticket keeps the long-lived token out of the URL
+		// (and therefore out of proxy logs). The token query/header is
+		// still accepted for non-browser callers.
+		if !tickets.Valid(r.URL.Query().Get("ticket")) && !authorizeWithQuery(cfg, r) {
+			log.Printf("ws: unauthorized upgrade attempt from %s", ip)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		conn, err := upgrader.Upgrade(w, r, nil)
+		conn, err := up.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("ws upgrade: %v", err)
 			return
@@ -424,11 +469,60 @@ func NewAuthHandler(cfg *Config) http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if !tokenEqual(body.Token, cfg.Token) {
+		if !tokenEqual(body.Token, cfg.CurrentToken()) {
+			log.Printf("auth: failed token attempt from %s", clientIP(cfg, r))
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// NewTicketHandler issues a short-lived ticket for callers that can only
+// pass credentials in a URL (the WebSocket upgrade and download links).
+// Requires the main token via header — the ticket never gives more
+// access than the caller already had.
+func NewTicketHandler(cfg *Config, tickets *TicketManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorize(cfg, r) {
+			log.Printf("ticket: unauthorized request from %s", clientIP(cfg, r))
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ticket":     tickets.Issue(),
+			"expires_in": int(ticketTTL.Seconds()),
+		})
+	}
+}
+
+// NewTokenRotateHandler rotates the auth token, invalidating every
+// client still holding the old one. Requires the current token via
+// header. Returns the new token so the rotating client can keep going.
+func NewTokenRotateHandler(cfg *Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorize(cfg, r) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		newToken, err := cfg.RotateToken()
+		if err != nil {
+			log.Printf("token: rotation failed: %v", err)
+			http.Error(w, "could not rotate token", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("token: rotated by %s — all other clients must re-authenticate", clientIP(cfg, r))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": newToken})
 	}
 }
 
