@@ -77,6 +77,18 @@ func (f *FileService) SafePath(rel string) (string, error) {
 	if relCheck == ".." || strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) {
 		return "", errors.New("path outside files root")
 	}
+	// Defense-in-depth: if the target already exists and is (or sits
+	// under) a symlink, resolve it and re-check, so a symlink inside the
+	// root can't point read/list/download at something outside it.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		rootResolved, rerr := filepath.EvalSymlinks(rootAbs)
+		if rerr == nil {
+			rc, rerr := filepath.Rel(rootResolved, resolved)
+			if rerr != nil || rc == ".." || strings.HasPrefix(rc, ".."+string(filepath.Separator)) {
+				return "", errors.New("path outside files root")
+			}
+		}
+	}
 	return abs, nil
 }
 
@@ -86,7 +98,7 @@ func (f *FileService) SafePath(rel string) (string, error) {
 //   POST /api/files                  (multipart) → [{name, path, size}]
 //   GET  /api/files/download?path=R   → file bytes
 //   GET  /api/files/list?dir=R        → [{name, size, mod, dir}]
-func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService) {
+func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService, tickets *TicketManager) {
 	mux.HandleFunc("POST /api/files", func(w http.ResponseWriter, r *http.Request) {
 		if !authorize(cfg, r) {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -109,7 +121,8 @@ func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService) {
 			}
 			destDir = d
 			if err := os.MkdirAll(destDir, 0o755); err != nil {
-				http.Error(w, "create dir: "+err.Error(), http.StatusInternalServerError)
+				log.Printf("files: mkdir %q: %v", destDir, err)
+				http.Error(w, "could not create directory", http.StatusInternalServerError)
 				return
 			}
 		}
@@ -121,7 +134,8 @@ func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService) {
 				break
 			}
 			if err != nil {
-				http.Error(w, "multipart read: "+err.Error(), http.StatusBadRequest)
+				log.Printf("files: multipart read: %v", err)
+				http.Error(w, "could not read upload", http.StatusBadRequest)
 				return
 			}
 			if part.FileName() == "" {
@@ -144,7 +158,8 @@ func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService) {
 			out, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 			if err != nil {
 				_ = part.Close()
-				http.Error(w, "open file: "+err.Error(), http.StatusInternalServerError)
+				log.Printf("files: open %q: %v", fullPath, err)
+				http.Error(w, "could not save file", http.StatusInternalServerError)
 				return
 			}
 			n, copyErr := io.CopyN(out, part, fs.MaxUploadBytes+1)
@@ -152,7 +167,8 @@ func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService) {
 			if copyErr != nil && copyErr != io.EOF {
 				_ = out.Close()
 				_ = os.Remove(fullPath)
-				http.Error(w, "write file: "+copyErr.Error(), http.StatusInternalServerError)
+				log.Printf("files: write %q: %v", fullPath, copyErr)
+				http.Error(w, "could not save file", http.StatusInternalServerError)
 				return
 			}
 			if n > fs.MaxUploadBytes {
@@ -174,8 +190,9 @@ func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService) {
 	})
 
 	mux.HandleFunc("GET /api/files/download", func(w http.ResponseWriter, r *http.Request) {
-		// Download accepts ?token= so plain <a download> links work.
-		if !authorizeWithQuery(cfg, r) {
+		// Download accepts a short-lived ?ticket= (preferred) or ?token=
+		// so a plain <a download> link works without a custom header.
+		if !tickets.Valid(r.URL.Query().Get("ticket")) && !authorizeWithQuery(cfg, r) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -215,7 +232,8 @@ func RegisterFileRoutes(mux *http.ServeMux, cfg *Config, fs *FileService) {
 		}
 		entries, err := os.ReadDir(base)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			log.Printf("files: readdir %q: %v", base, err)
+			http.Error(w, "could not list directory", http.StatusNotFound)
 			return
 		}
 		type item struct {

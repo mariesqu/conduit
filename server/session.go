@@ -303,6 +303,7 @@ func (m *SessionManager) Create(name, shellName string, cols, rows uint16) (*Ses
 	m.sessions[name] = sess
 	m.mu.Unlock()
 
+	log.Printf("session: created %q shell=%s", name, shellName)
 	go sess.run()
 	return sess, nil
 }

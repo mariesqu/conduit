@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,6 +60,22 @@ func main() {
 	defer shares.Shutdown()
 	mgr.OnSessionRemoved = shares.RevokeForSession
 
+	tickets := server.NewTicketManager()
+	defer tickets.Shutdown()
+
+	// Tight per-IP limiter for the UNauthenticated guess surface
+	// (/api/auth): ~1 req/s sustained, burst 10. The high-entropy token
+	// makes brute force pointless anyway; this just caps flood/log noise.
+	authLimiter := server.NewRateLimiter(1, 10)
+	defer authLimiter.Shutdown()
+
+	// Generous limiter for /api/ticket. It already requires a valid token,
+	// and the UI fetches one per WebSocket connect and per download — so a
+	// user restoring many tabs or launching a multi-session preset must
+	// not be starved. This only bounds pathological abuse.
+	ticketLimiter := server.NewRateLimiter(20, 60)
+	defer ticketLimiter.Shutdown()
+
 	files, err := server.NewFileService(cfg.FilesRoot, cfg.MaxUploadMB)
 	if err != nil {
 		log.Fatalf("file service: %v", err)
@@ -66,27 +83,51 @@ func main() {
 	log.Printf("files root: %s", files.Root)
 
 	mux := http.NewServeMux()
-	mux.Handle("/ws", server.NewWSHandler(cfg, mgr, shares))
+	mux.Handle("/ws", server.NewWSHandler(cfg, mgr, shares, tickets))
 	mux.HandleFunc("/api/shells", server.NewShellsHandler(cfg))
-	mux.HandleFunc("/api/auth", server.NewAuthHandler(cfg))
+	mux.Handle("/api/auth", server.RateLimit(cfg, authLimiter, server.NewAuthHandler(cfg)))
+	mux.Handle("/api/ticket", server.RateLimit(cfg, ticketLimiter, server.NewTicketHandler(cfg, tickets)))
+	mux.HandleFunc("/api/token/rotate", server.NewTokenRotateHandler(cfg))
 	server.RegisterSessionRoutes(mux, cfg, mgr)
 	server.RegisterShareRoutes(mux, cfg, mgr, shares)
-	server.RegisterFileRoutes(mux, cfg, files)
+	server.RegisterFileRoutes(mux, cfg, files, tickets)
 	server.RegisterPresetRoutes(mux, cfg, mgr)
 	mux.Handle("/", server.NewUIHandler(uiFS))
 
+	// Refuse to expose the server on a non-loopback address over plain
+	// HTTP unless TLS is configured or the operator explicitly opts in.
+	// Plain HTTP on a reachable interface serves the auth token and every
+	// keystroke in cleartext.
+	if !isLoopbackBind(cfg.Bind) && !cfg.TLSEnabled() && !cfg.AllowInsecure {
+		log.Fatalf("refusing to bind to non-loopback address %q over plain HTTP — "+
+			"the auth token and all terminal traffic would travel in cleartext.\n"+
+			"  • set \"tls_cert\"/\"tls_key\" in the config for direct HTTPS, or\n"+
+			"  • bind to 127.0.0.1 and expose via a tunnel (cloudflared/tailscale), or\n"+
+			"  • set \"allow_insecure\": true only if the network is already encrypted.", cfg.Bind)
+	}
+
+	scheme := "http"
+	if cfg.TLSEnabled() {
+		scheme = "https"
+	}
 	addr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.Port)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           server.SecurityHeaders(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("conduit listening on http://%s", addr)
+	log.Printf("conduit listening on %s://%s", scheme, addr)
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen: %v", err)
+		var serveErr error
+		if cfg.TLSEnabled() {
+			serveErr = srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
+		} else {
+			serveErr = srv.ListenAndServe()
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			log.Fatalf("listen: %v", serveErr)
 		}
 	}()
 
@@ -104,7 +145,7 @@ func main() {
 
 	accessURL := buildAccessURL(publicURL, cfg)
 	log.Printf("access URL: %s", accessURL)
-	log.Printf("auth token: %s", cfg.Token)
+	log.Printf("auth token: %s", cfg.CurrentToken())
 
 	if !noQR {
 		qr, err := server.RenderQRToTerminal(accessURL)
@@ -169,16 +210,34 @@ func maybeStartTunnel(mode string, port int) *server.Tunnel {
 	}
 }
 
+// isLoopbackBind reports whether the configured bind address is a
+// loopback interface (or the empty default, which LoadConfig turns into
+// 127.0.0.1). Used to gate the cleartext-exposure guard.
+func isLoopbackBind(bind string) bool {
+	switch strings.ToLower(strings.TrimSpace(bind)) {
+	case "", "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	if ip := net.ParseIP(strings.TrimSpace(bind)); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 // buildAccessURL composes the URL to print on startup, with the auth
 // token embedded so a phone scanning the QR can sign in with one tap.
 func buildAccessURL(publicURL string, cfg *server.Config) string {
 	base := publicURL
 	if base == "" {
+		scheme := "http"
+		if cfg.TLSEnabled() {
+			scheme = "https"
+		}
 		host := server.HostForURL(cfg.Bind)
-		base = fmt.Sprintf("http://%s:%d", host, cfg.Port)
+		base = fmt.Sprintf("%s://%s:%d", scheme, host, cfg.Port)
 	}
 	base = strings.TrimRight(base, "/")
 	q := url.Values{}
-	q.Set("token", cfg.Token)
+	q.Set("token", cfg.CurrentToken())
 	return base + "/?" + q.Encode()
 }
