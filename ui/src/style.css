@@ -574,6 +574,14 @@ input {
 .xterm .xterm-viewport {
   overflow-y: auto;
   scrollbar-width: thin;
+  /* Mobile scrollback fix: without an explicit touch-action, the page's
+     `overscroll-behavior: none` (set on html/body to stop bounce) also
+     swallows vertical touch gestures here, so the scrollback feels
+     frozen. pan-y hands the gesture to the viewport; the momentum +
+     contain keep the scroll smooth and from chaining to the body. */
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 /* ---------- New-session form ---------- */
