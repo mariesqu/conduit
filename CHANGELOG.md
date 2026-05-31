@@ -7,6 +7,39 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Short-lived tickets (`POST /api/ticket`) so the long-lived token no longer
+  travels in WebSocket or download URLs (keeps it out of proxy/access logs)
+- Token rotation (`POST /api/token/rotate`, Settings → **Rotate**) — a revoke
+  path that signs out every other client
+- Direct HTTPS via `tls_cert`/`tls_key`
+- WebSocket `Origin` enforcement with optional `allowed_origins` allowlist
+- Per-IP rate limiting on the credential endpoints
+- Audit logging of auth failures, share create/attach, session creation, and
+  token rotation (with client IP)
+- Security tests for tickets, rate limiter, origin check, preset sanitization,
+  and token rotation
+
+### Changed
+
+- A non-loopback bind over plain HTTP is now **refused at startup** unless
+  `tls_cert`/`tls_key` are set or `allow_insecure=true` (secure by default)
+- Access token is masked in Settings (reveal/copy on demand)
+
+### Security
+
+- Security response headers on every response: CSP (`script-src 'self'`),
+  `Referrer-Policy: no-referrer`, `nosniff`, `X-Frame-Options: DENY`, HSTS
+- `SafePath` now resolves symlinks so an in-root symlink can't escape the root
+- Control characters stripped from preset `dir`/`command`; tighter shell quoting
+- File-API errors return generic messages; details logged server-side only
+
+### Fixed
+
+- Mobile: terminal scrollback is now touch-scrollable (the page's
+  `overscroll-behavior` was swallowing the gesture)
+
 ## [0.1.0] - 2026-05-26
 
 ### Added
